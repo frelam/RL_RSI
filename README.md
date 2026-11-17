@@ -19,10 +19,12 @@ loop for: trajectory collect(rollout or from inference) -> analyze bad case -> t
 ### write code to sync enviroment or task for agentic data.
 ### sync data for other task.
 ### collect some new world data. May be world new knowledge, new problem, or use camara to collect real-world events
+### Consider and decide on the data allocation.
+### Filter the data according to difficulty level
+### build a new dataset
 
 ## 4. use RL framework to train it-self(verl, slime, etc.)
-### using new collected data.
-### Filter the data according to difficulty level
-### train the model until convert
+### using the new dataset train the model until converge.
+### dynamic indicator monitoring
 
-## 5. return to step 1 and that is a loop.
+## 5. deploy a new checkpoint and return to step 1 and that is a loop.
