@@ -32,5 +32,7 @@ This feature will be available as a plugin, compatible with various harnesses, s
 - Debug training scripts based on the new reward, data, and receipe.
 - using the new dataset train the model until converge.
 - dynamic indicator monitoring(early stop, auto recover)
+- run benchmark, if not good, than analyze and retrain(may be go back to step3)
+- finally get a new version of better checkpoint and store it.
 
 ## 5. return to step 1 and as a loop.
