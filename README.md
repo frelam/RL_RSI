@@ -1,6 +1,6 @@
 # RL_RSI
 
-A Self-distillation Loop to automatically improve a model performance via reinforcement learning.
+A Self-improvment RL Loop to automatically improve a model performance via reinforcement learning.
 
 loop for: trajectory collect(rollout or from inference) -> analyze bad case -> task synthesis(data collect\env synthesis) -> RL train -> update checkpoint ->  traj collect
 
