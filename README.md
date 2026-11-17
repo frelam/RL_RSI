@@ -7,7 +7,7 @@ loop for: trajectory collect(rollout or from inference) -> analyze bad case -> t
 This feature will be available as a plugin, compatible with various harnesses, such as DeepSeek Harness and Hermes.
 
 ## 1. trajectory collect.  
-- Deploy model with current checkpoint as a inference checkpoint. (via vllm\sglang, etc.)
+- Deploy model with current checkpoint as a inference endpoint. (via vllm\sglang, etc.)
 - collect trajectory from deploy endpoint during a period of time.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
 - run benchmark with current checkpoint (via evalscope, etc.)
 - collect benchmark result and trajectory
@@ -33,4 +33,4 @@ This feature will be available as a plugin, compatible with various harnesses, s
 - using the new dataset train the model until converge.
 - dynamic indicator monitoring(early stop, auto recover)
 
-## 5. deploy a new checkpoint and return to step 1 and that is a loop.
+## 5. return to step 1 and as a loop.
