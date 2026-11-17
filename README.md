@@ -8,7 +8,7 @@ This feature will be available as a plugin, compatible with various harnesses, s
 
 ## 1. trajectory collect.  
 - rl train validation trajectory collect
-- collect trajectory from deploy endpoint
+- collect trajectory from deploy endpoint.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
 
 ## 2. analyze bad case(base on P!=NP, verify is easier than generation)
 - Using benchmarks.
