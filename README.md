@@ -35,7 +35,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Use agent to debug training scripts based on the new reward, data, and receipe.
 - Train the model for some while.
 - Monitoring the metric.(Validation\entropy and so on. decide early stop or so on)
-- Run benchmark for new checkpoint to see if the missing capability has been fixed or not. If not go back to #3.
-- Finally get a new version of checkpoint which is better than before.
+- Analyze the metrics(if training goes in the desired direction). If not, identify the problem (reward\penalty) and adjust. Descide continuous training or re-training from the begining.
+- Finally get a new version of checkpoint which is good at validation score.
 
 ## 5. return to step 1 and as a loop.
