@@ -6,7 +6,7 @@ loop for: trajectory collect(rollout or from inference) -> analyze bad case -> t
 
 This feature will act like glue, combining Verl, VLLM, Harness, evalscope and certain algorithms into an RSI Loop.
 
-## 1. trajectory collect.  
+## 1. trajectory collect and benchmark.  
 - Deploy model with current checkpoint as a inference endpoint. (via vllm\sglang, etc.)
 - collect trajectory from deploy endpoint during a period of time.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
 - run benchmark with current checkpoint (via evalscope, etc.)(pass@k\mean@k\response_length)
@@ -34,8 +34,8 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Deploy the current version of model into a harness as an agent.
 - Use agent to debug training scripts based on the new reward, data, and receipe.
 - Train the model for some while.
-- Monitoring the metric.(Validation\entropy and so on. decide early stop or so on)
 - Analyze the metrics(if training goes in the desired direction). If not, identify the problem (reward\penalty) and adjust. Descide continuous training or re-training from the begining.
+- Monitoring the metric.(Validation\entropy and so on. Check if some task is saturation. Decide need early stop)
 - Finally get a new version of checkpoint which is good at validation score.
 
 ## 5. return to step 1 and as a loop.
