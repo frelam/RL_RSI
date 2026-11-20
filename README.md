@@ -22,7 +22,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 ## 3. collect more data for model addressing the shortcomings of the model
 - Deploy the current version of model into a harness as an agent.
 - Base on the defect found in step2, use agent to collect data.
-- Need some smart algorithm of data collection. eg: 1.Break down the missing capabilities into sub-capabilities to find sub-problems. 2. Ensure data diversity.
+- Need some smart algorithm of data collection. eg: 1.Break down the missing capabilities into sub-capabilities to find sub-problems. 2. Ensure data diversity. 3. design a  curriculum learning strategy， decide which ability first to learn and which the next round.
 - For agentic task: write code to synthesis enviroment or task.
 - For generate task: collect or synthesis data.
 - Collect new Knowledge: collect some new world data. May be world new knowledge, new problem, or use camara to collect real-world events
