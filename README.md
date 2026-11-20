@@ -26,7 +26,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - For agentic task: write code to synthesis enviroment or task.
 - For generate task: collect or synthesis data.
 - Collect new Knowledge: collect some new world data. May be world new knowledge, new problem, or use camara to collect real-world events
-- Consider and decide on the data mixing ratio.
+- Consider and decide on the data mixing ratio. (Understanding the conflicts and synergies between datasets category. If confict, find Pareto value; If synergies, find best ratio.) Use experiment to find the best ratio.
 - Filter the data according to difficulty level.
 - Build a new dataset and reward.
 
