@@ -9,7 +9,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 ## 1. trajectory collect.  
 - Deploy model with current checkpoint as a inference endpoint. (via vllm\sglang, etc.)
 - collect trajectory from deploy endpoint during a period of time.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
-- run benchmark with current checkpoint (via evalscope, etc.)
+- run benchmark with current checkpoint (via evalscope, etc.)(pass@k\mean@k\response_length)
 - collect benchmark result and trajectory
 
 ## 2. analyze bad case(base on P!=NP, verify is easier than generation)
