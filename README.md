@@ -6,6 +6,8 @@ loop for: trajectory collect(rollout or from inference) -> analyze bad case -> t
 
 This feature will act like glue, combining Verl, VLLM, Harness, evalscope and certain algorithms into an RSI Loop.
 
+**A classical Loop** (May support other loop Orchestration):
+
 ## 1. trajectory collect and benchmark.  
 - Deploy model with current checkpoint as a inference endpoint. (via vllm\sglang, etc.)
 - collect trajectory from deploy endpoint during a period of time.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
