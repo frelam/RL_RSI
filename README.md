@@ -9,13 +9,13 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 ## 1. trajectory collect and benchmark.  
 - Deploy model with current checkpoint as a inference endpoint. (via vllm\sglang, etc.)
 - collect trajectory from deploy endpoint during a period of time.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
-- run benchmark with current checkpoint (via evalscope, etc.)(pass@k\mean@k\response_length)
+- run benchmark with current checkpoint (via evalscope, etc.)(pass@k\mean@k\response_length and so on)
 - collect benchmark result and trajectory
 
 ## 2. analyze bad case(base on P!=NP, verify is easier than generation)
 - Rule-base benchmark analyze. (pattern of low-scoring benchmark combination)
 - About rule-base analyze algorithm： 1. Defining hundreds of basic atomic capabilities. 2. Maintain a mapping between each sub-item of a benchmark and multiple capabilities. 3. If some benchmark sub-item is lower than average, mark the corresponse capabilities as nagative. 4. Use OR operations to synthesize the capability deficiencies reported by various benchmarks. 
-- Using LLM judge to analyze bad case.
+- Using LLM judge to analyze bad case.（Or maybe human judge\multi model judge and vote\teacher judge\self judge）
 - About LLM judge analyze algorithm: Good skills, good prompt, and use some scoring rules to reduce scoring bias.
 - Summarize What capabilities are missing in the model.
 
