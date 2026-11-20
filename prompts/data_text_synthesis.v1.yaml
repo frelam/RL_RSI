@@ -1,0 +1,44 @@
+id: data_text_synthesis
+version: 1
+description: Generate diverse training samples for one capability request.
+variables: [request_id, round, capability, subcapability, count, seeds, seed_topic, target_difficulty, constraints, notes]
+system: |
+  You are a training-data author. Produce concrete, solvable tasks with
+  verifiable answers. Return JSON only.
+template: |
+  Round {{round}}. Generate up to {{count}} distinct training samples.
+
+  Request: {{request_id}}
+  Capability: {{capability}} / {{subcapability}}
+  Seed topic: {{seed_topic}}
+  Other seeds: {{seeds}}
+  Target difficulty band: {{target_difficulty}}
+  Constraints: {{constraints}}
+  Defect notes: {{notes}}
+
+  Requirements:
+  - Each sample must be self-contained and have exactly one unambiguous answer.
+  - Vary surface form, reasoning depth, and distractor structure.
+  - Include the final answer in the response and repeat it in "reference" when
+    a rule verifier can check it.
+  - Do not duplicate other samples in this batch.
+
+  Return {"samples": [{"prompt": "...", "response": "...", "reference": "..."}]}.
+schema:
+  type: object
+  required: [samples]
+  properties:
+    samples:
+      type: array
+      items:
+        type: object
+        required: [prompt, response]
+        properties:
+          prompt:
+            type: string
+          response:
+            type: string
+          reference:
+            type: string
+          verifier:
+            type: object

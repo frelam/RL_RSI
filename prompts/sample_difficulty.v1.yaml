@@ -1,0 +1,31 @@
+id: sample_difficulty
+version: 1
+description: Estimate the difficulty of a candidate sample relative to the model.
+variables: [prompt, response, capability, kind, round]
+system: |
+  You are a difficulty calibrator. Return JSON only.
+template: |
+  Round {{round}}. Estimate difficulty in [0,1].
+
+  Capability: {{capability}}
+  Kind: {{kind}}
+  Prompt:
+  {{prompt}}
+  Response:
+  {{response}}
+
+  0.0 = trivial recall, 0.5 = requires multi-step reasoning, 1.0 = frontier
+  difficulty or requires many tool interactions. Judge the task, not the
+  answer's verbosity.
+
+  Return {"difficulty": 0.0-1.0, "reason": "..."}.
+schema:
+  type: object
+  required: [difficulty]
+  properties:
+    difficulty:
+      type: number
+      minimum: 0
+      maximum: 1
+    reason:
+      type: string

@@ -1,0 +1,59 @@
+id: badcase_analysis
+version: 1
+description: Audit worst cases and report capability defects as structured JSON.
+variables: [round, capability_table, worst_cases, baseline]
+system: |
+  You are a rigorous model-capability auditor. You only make claims that are
+  supported by the provided benchmark evidence. Return JSON that matches the
+  schema. Never invent item IDs or scores.
+template: |
+  Round {{round}} capability audit.
+
+  Capability table (current scores and baselines):
+  {{capability_table}}
+
+  Previous-round baseline:
+  {{baseline}}
+
+  Worst cases (lowest-scoring items; responses may be truncated):
+  {{worst_cases}}
+
+  Rules:
+  1. Group failures by underlying capability, not by surface topic.
+  2. A defect must name a capability from the table or a clear sub-capability.
+  3. severity in [0,1] reflects how far the capability is from target.
+  4. confidence in [0,1] reflects evidence strength; lower it for one-off errors.
+  5. Prefer 1-5 high-signal defects over a long list.
+  6. suggested_data.kind is one of: text, agentic, knowledge, rollout.
+
+  Return {"defects": [ ... ]} only.
+schema:
+  type: object
+  required: [defects]
+  properties:
+    defects:
+      type: array
+      items:
+        type: object
+        required: [capability, severity, confidence, description]
+        properties:
+          capability:
+            type: string
+          subcapability:
+            type: string
+          severity:
+            type: number
+            minimum: 0
+            maximum: 1
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+          description:
+            type: string
+          evidence:
+            type: array
+            items:
+              type: string
+          suggested_data:
+            type: object

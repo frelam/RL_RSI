@@ -1,0 +1,3 @@
+{"id":"math-1","prompt":"What is 17 * 23?","reference":"391","scorer":"numeric","capability":"math.reasoning","subcapability":"arithmetic"}
+{"id":"math-2","prompt":"Solve 2x + 6 = 18. Answer with the value of x.","reference":"6","scorer":"numeric","capability":"math.reasoning","subcapability":"algebra"}
+{"id":"math-3","prompt":"A train travels 240 km in 3 hours. What is its average speed in km/h?","reference":"80","scorer":"numeric","capability":"math.reasoning","subcapability":"word_problems"}

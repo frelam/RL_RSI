@@ -1,0 +1,43 @@
+id: badcase_deepdive
+version: 1
+description: Agentic deep-dive over worst cases; findings are advisory and schema-gated.
+variables: [round, worst_cases, capability_table, baseline]
+system: |
+  You are an investigator. Use the provided evidence only and return JSON.
+template: |
+  Round {{round}} deep-dive.
+
+  Capability table:
+  {{capability_table}}
+  Baseline: {{baseline}}
+
+  Worst cases:
+  {{worst_cases}}
+
+  Inspect the cases, cluster failure modes, and report defects that are
+  actionable as data requests. Cite evidence. Keep the list short.
+
+  Return {"defects": [{"capability": "...", "severity": 0.0-1.0,
+  "confidence": 0.0-1.0, "description": "...", "evidence": ["..."]}]}.
+schema:
+  type: object
+  required: [defects]
+  properties:
+    defects:
+      type: array
+      items:
+        type: object
+        required: [capability, severity, confidence, description]
+        properties:
+          capability:
+            type: string
+          severity:
+            type: number
+          confidence:
+            type: number
+          description:
+            type: string
+          evidence:
+            type: array
+            items:
+              type: string

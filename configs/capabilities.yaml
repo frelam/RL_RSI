@@ -1,0 +1,68 @@
+# Capability catalog: the shared vocabulary for benchmarks, analysis and data.
+# Add entries to make planning/reward selection more precise. Unknown
+# capabilities fall back to the defaults below.
+
+defaults:
+  kind: text
+  priority: 0.5
+  reward:
+    type: rule
+    name: contains
+    weight: 1.0
+  verifier:
+    type: rule
+    name: contains
+  seeds: []
+
+capabilities:
+  math.reasoning:
+    description: multi-step quantitative reasoning and verification
+    kind: text
+    priority: 1.0
+    seeds: [algebra, geometry, word problems, arithmetic verification]
+    reward: {type: rule, name: numeric, weight: 1.0}
+    verifier: {type: rule, name: numeric, tolerance: 0.001}
+    benchmark:
+      - benchmark: demo
+        match: "math"
+
+  code.debugging:
+    description: locate and repair defects in code from symptoms or tests
+    kind: text
+    priority: 0.9
+    seeds: [python traceback, logic bug, edge case, failing unit test]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+    benchmark:
+      - benchmark: demo
+        match: "code"
+
+  instruction.following:
+    description: satisfy multiple explicit formatting and content constraints
+    kind: text
+    priority: 0.7
+    seeds: [format constraints, multi-constraint answers, structured output]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+    benchmark:
+      - benchmark: demo
+        match: "instruction"
+
+  long_context.retrieval:
+    description: retrieve and combine evidence across long or multi-document contexts
+    kind: text
+    priority: 0.8
+    seeds: [needle in a haystack, multi-document QA, distractor passages, multi-hop retrieval]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+    benchmark:
+      - benchmark: demo
+        match: "long_context"
+
+  agentic.tool_use:
+    description: plan and execute multi-turn tool use in an environment
+    kind: agentic
+    priority: 0.9
+    seeds: [file editing, test-driven repair, shell tool use]
+    reward: {type: harness, name: task_success, weight: 1.0}
+    verifier: {type: harness, name: tests_pass}

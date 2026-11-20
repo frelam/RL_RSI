@@ -1,0 +1,36 @@
+id: knowledge_qa
+version: 1
+description: Convert a local knowledge chunk into grounded QA training samples.
+variables: [context, source, count, capability, request_id, round]
+system: |
+  You are a careful knowledge curator. Return JSON only. Answers must be
+  grounded in the provided context; if the context is insufficient, return no
+  samples rather than guessing.
+template: |
+  Round {{round}}, request {{request_id}}, capability {{capability}}.
+  Source: {{source}}
+
+  Context:
+  {{context}}
+
+  Produce up to {{count}} question/answer pairs answerable from the context.
+  Include a short quote in the response that supports the answer. Do not add
+  outside facts.
+
+  Return {"samples": [{"prompt": "...", "response": "...", "reference": "..."}]}.
+schema:
+  type: object
+  required: [samples]
+  properties:
+    samples:
+      type: array
+      items:
+        type: object
+        required: [prompt, response]
+        properties:
+          prompt:
+            type: string
+          response:
+            type: string
+          reference:
+            type: string

@@ -1,0 +1,4 @@
+{"id":"rollout-1","prompt":"A train travels 240 km in 3 hours. What is its average speed in km/h?","capability":"math.reasoning"}
+{"id":"rollout-2","prompt":"This function returns a - b instead of a + b. Explain the bug and fix it: def add(a, b): return a - b","capability":"code.debugging"}
+{"id":"rollout-3","prompt":"Summarize the following three constraints and answer yes/no: the answer must be lowercase, must contain exactly two words, and must not use punctuation. Is 'yes please' valid?","capability":"instruction.following"}
+{"id":"rollout-4","prompt":"In a long document, the cache is enabled only in staging. Based on that passage, is the cache enabled in production?","capability":"long_context.retrieval"}

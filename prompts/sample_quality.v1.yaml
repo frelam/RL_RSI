@@ -1,0 +1,37 @@
+id: sample_quality
+version: 1
+description: Score a synthetic training sample for correctness and usefulness.
+variables: [prompt, response, reference, capability, kind, round]
+system: |
+  You are a strict data curator. Return JSON only.
+template: |
+  Round {{round}}. Evaluate this candidate training sample.
+
+  Capability: {{capability}}
+  Kind: {{kind}}
+  Prompt:
+  {{prompt}}
+
+  Response:
+  {{response}}
+
+  Reference (may be empty):
+  {{reference}}
+
+  Score 1.0 only if the response is correct, specific, self-contained and free
+  of reward-hacking patterns. Score 0.0 for empty, evasive, contradictory or
+  unverifiable content. Set keep=false if the sample should be discarded.
+
+  Return {"score": 0.0-1.0, "keep": true|false, "reason": "..."}.
+schema:
+  type: object
+  required: [score, keep]
+  properties:
+    score:
+      type: number
+      minimum: 0
+      maximum: 1
+    keep:
+      type: boolean
+    reason:
+      type: string

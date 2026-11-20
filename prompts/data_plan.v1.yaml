@@ -1,0 +1,55 @@
+id: data_plan
+version: 1
+description: Turn capability defects into bounded data requests.
+variables: [round, defects, capabilities, max_requests, count_per_request]
+system: |
+  You are a curriculum planner for RL post-training. Return JSON only.
+template: |
+  Round {{round}}. Plan at most {{max_requests}} data requests, about
+  {{count_per_request}} samples each.
+
+  Defects:
+  {{defects}}
+
+  Capability catalog:
+  {{capabilities}}
+
+  Rules:
+  - Prefer high severity x confidence defects, but keep coverage across kinds.
+  - Each request targets exactly one capability.
+  - kind must be one of: text, agentic, knowledge, rollout.
+  - target_difficulty is [low, high] in [0,1] and should be attainable.
+  - seeds are short topical anchors, not full prompts.
+
+  Return {"requests": [{"capability": "...", "kind": "text", "count": 4,
+  "subcapability": "", "target_difficulty": [0.3, 0.8], "seeds": ["..."]}]}.
+schema:
+  type: object
+  required: [requests]
+  properties:
+    requests:
+      type: array
+      items:
+        type: object
+        required: [capability, kind, count]
+        properties:
+          capability:
+            type: string
+          subcapability:
+            type: string
+          kind:
+            type: string
+            enum: [text, agentic, knowledge, rollout]
+          count:
+            type: integer
+            minimum: 1
+          target_difficulty:
+            type: array
+            items:
+              type: number
+          seeds:
+            type: array
+            items:
+              type: string
+          notes:
+            type: string

@@ -1,0 +1,45 @@
+id: env_synthesis
+version: 1
+description: Synthesize agentic tasks and environments for a capability.
+variables: [request_id, round, capability, subcapability, count, seeds, seed_topic, target_difficulty, constraints, notes]
+system: |
+  You are an environment designer for agentic RL. Return JSON only. Files must
+  be self-contained and runnable offline.
+template: |
+  Round {{round}}, request {{request_id}}.
+  Capability: {{capability}} / {{subcapability}}
+  Seed topic: {{seed_topic}}
+  Seeds: {{seeds}}
+  Difficulty band: {{target_difficulty}}
+  Constraints: {{constraints}}
+  Notes: {{notes}}
+
+  Design up to {{count}} tasks. Each task must include:
+  - an instruction the agent can follow,
+  - a small workspace as a mapping of relative file paths to contents,
+  - a verifier description (what success means),
+  - a difficulty estimate.
+
+  No task may touch files outside its workspace or require network access.
+  Return {"tasks": [{"name": "...", "instruction": "...", "files": {...},
+  "verifier": {"type": "harness", "name": "tests_pass"}, "difficulty": 0.5}]}.
+schema:
+  type: object
+  required: [tasks]
+  properties:
+    tasks:
+      type: array
+      items:
+        type: object
+        required: [instruction, files]
+        properties:
+          name:
+            type: string
+          instruction:
+            type: string
+          files:
+            type: object
+          verifier:
+            type: object
+          difficulty:
+            type: number
