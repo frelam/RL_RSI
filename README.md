@@ -56,6 +56,8 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Train the model for some while.
 - Analyze the metrics(if training goes in the desired direction). If not, identify the problem (reward\penalty) and adjust. Descide continuous training or re-training from the begining.
 - Monitoring the metric.(Validation\entropy and so on. Check if some task is saturation. Decide need early stop)
+- Need metrics observe-action strategy： for example，If domain pass rate differ too much，update domain data， to avoid gradient direction not correct
 - Finally get a new version of checkpoint which is good at validation score.
+
 
 ## 5. return to step 1 and as a loop.
