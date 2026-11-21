@@ -27,7 +27,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 **A classical Loop** (May support other loop Orchestration):
 
 ## 1. trajectory collect and benchmark.  
-- Deploy model with current checkpoint as a inference endpoint. (via vllm\sglang, etc.)
+
 - collect trajectory from deploy endpoint during a period of time.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
 - collect newest benchmark and merge into the former benchmark.
 - run benchmark to test model.(via evalscope, etc.)(pass@k\mean@k\response_length）
@@ -62,4 +62,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Finally get a new version of checkpoint which is good at validation score.
 
 
-## 5. return to step 1 and as a loop.
+## 5. Check new checkpoint
+- run benchmark
+- if ok, deploy model with current checkpoint as a inference endpoint. (via vllm\sglang, etc.)return to step 1 and as a loop.
+- if not ok, return to step 2
