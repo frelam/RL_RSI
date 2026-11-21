@@ -29,8 +29,9 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 ## 1. trajectory collect and benchmark.  
 - Deploy model with current checkpoint as a inference endpoint. (via vllm\sglang, etc.)
 - collect trajectory from deploy endpoint during a period of time.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
-- run benchmark with current checkpoint (via evalscope, etc.)(pass@k\mean@k\response_length and so on)
-- collect benchmark result and trajectory
+- collect newest benchmark.
+- run benchmark to test model.(via evalscope, etc.)(pass@k\mean@k\response_length）
+- collect model test result on new data distribution.
 
 ## 2. analyze bad case(base on P!=NP, verify is easier than generation)
 - Rule-base benchmark analyze. (pattern of low-scoring benchmark combination)
@@ -48,15 +49,17 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Collect new Knowledge: collect some new world data. May be world new knowledge, new problem, or use camara to collect real-world events
 - Consider and decide on the data mixing ratio. (Understanding the conflicts and synergies between datasets category. If confict, find Pareto value; If synergies, find best ratio.) Use experiment to find the best ratio.
 - Filter the data according to difficulty level.
-- Build a new dataset and reward.
+- propose a new dataset and reward.
 
 ## 4. use RL framework to train by model it-self.(via verl, slime, etc.)
 - Deploy the current version of model into a harness as an agent.
 - Use agent to debug training scripts based on the new reward, data, and receipe.
-- Train the model for some while.
-- Analyze the metrics(if training goes in the desired direction). If not, identify the problem (reward\penalty) and adjust. Descide continuous training or re-training from the begining.
+- Ensure training scripts runable.
+- Smoke run. 1. Ensure reward no hacking. 2. Run some experiment to slightly adjust data mix ratio. 3. finetune Training hyper parameter.
+- Formal Run.
 - Monitoring the metric.(Validation\entropy and so on. Check if some task is saturation. Decide need early stop)
-- Need metrics observe-action strategy： for example，If domain pass rate differ too much，update domain data， to avoid gradient direction not correct
+- Need metrics observe-action strategy： 1. Update data to ensure each domain has sufficient gradient.
+- continue formal run.
 - Finally get a new version of checkpoint which is good at validation score.
 
 
