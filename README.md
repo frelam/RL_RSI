@@ -29,9 +29,9 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 ## 1. trajectory collect and benchmark.  
 - Deploy model with current checkpoint as a inference endpoint. (via vllm\sglang, etc.)
 - collect trajectory from deploy endpoint during a period of time.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
-- collect newest benchmark.
+- collect newest benchmark and merge into the former benchmark.
 - run benchmark to test model.(via evalscope, etc.)(pass@k\mean@k\response_length）
-- collect model test result on new data distribution.
+- summarize trajectory and benchmark result of the current checkpoint on new data distribution and new benchmark 
 
 ## 2. analyze bad case(base on P!=NP, verify is easier than generation)
 - Rule-base benchmark analyze. (pattern of low-scoring benchmark combination)
@@ -40,14 +40,13 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - About LLM judge analyze algorithm: Good skills, good prompt, and use some scoring rules to reduce scoring bias.
 - Summarize What capabilities are missing in the model.
 
-## 3. collect more data for model addressing the shortcomings of the model
-- Deploy the current version of model into a harness as an agent.
-- Base on the defect found in step2, use agent to collect data.
-- Need some smart algorithm of data collection. eg: 1.Break down the missing capabilities into sub-capabilities to find sub-problems. 2. Ensure data diversity. 3. design a  curriculum learning strategy， decide which ability first to learn and which the next round.
+## 3. collect data for addressing the shortcomings of the model
+- Need some smart algorithm of data collection. eg: 1.Greedily cover abilities 2. Ensure data diversity. 
 - For agentic task: write code to synthesis enviroment or task.
 - For generate task: collect or synthesis data.
 - Collect new Knowledge: collect some new world data. May be world new knowledge, new problem, or use camara to collect real-world events
 - Consider and decide on the data mixing ratio. (Understanding the conflicts and synergies between datasets category. If confict, find Pareto value; If synergies, find best ratio.) Use experiment to find the best ratio.
+- Create a new dataset pool.
 - Filter the data according to difficulty level.
 - propose a new dataset and reward.
 
@@ -58,7 +57,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Smoke run. 1. Ensure reward no hacking. 2. Run some experiment to slightly adjust data mix ratio. 3. finetune Training hyper parameter.
 - Formal Run.
 - Monitoring the metric.(Validation\entropy and so on. Check if some task is saturation. Decide need early stop)
-- Need metrics observe-action strategy： 1. Update data to ensure each domain has sufficient gradient.
+- Need metrics observe-action strategy： 1. Update data from dataset pool to ensure each domain has sufficient gradient.
 - continue formal run.
 - Finally get a new version of checkpoint which is good at validation score.
 
