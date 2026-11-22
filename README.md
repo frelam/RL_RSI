@@ -46,19 +46,19 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - For generate task: collect or synthesis data.
 - Collect new Knowledge: collect some new world data. May be world new knowledge, new problem, or use camara to collect real-world events
 - Consider and decide on the data mixing ratio. (Understanding the conflicts and synergies between datasets category. If confict, find Pareto value; If synergies, find best ratio.) Use experiment to find the best ratio.
-- Create a new dataset pool.
-- Filter the data according to difficulty level.
-- propose a new dataset and reward.
+- Mix replay data and new data to Create a new dataset pool.
+- Implement the reward corresponding to the dataset pool.
+
 
 ## 4. use RL framework to train by model it-self.(via verl, slime, etc.)
 - Deploy the current version of model into a harness as an agent.
 - Use agent to debug training scripts based on the new reward, data, and receipe.
-- Ensure training scripts runable.
+- Filter the data with difficulty level from data pool. Create a dataset.
 - Smoke run. 1. Ensure reward no hacking. 2. Run some experiment to slightly adjust data mix ratio. 3. finetune Training hyper parameter.
 - Formal Run.
 - Monitoring the metric.(Validation\entropy and so on. Check if some task is saturation. Decide need early stop)
 - Need metrics observe-action strategy： 1. Update data from dataset pool to ensure each domain has sufficient gradient.
-- continue formal run.
+- Go back to filter data step
 - Finally get a new version of checkpoint which is good at validation score.
 
 
