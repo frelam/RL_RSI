@@ -39,6 +39,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Using LLM judge to analyze bad case.（Or maybe human judge\multi model judge and vote\teacher judge\self judge）
 - About LLM judge analyze algorithm: Good skills, good prompt, and use some scoring rules to reduce scoring bias.
 - Summarize What capabilities are missing in the model.
+- Separate capabilities into some experts domain. For each domain, run step2.
 
 ## 3. collect data for addressing the shortcomings of the model
 - Need some smart algorithm of data collection. eg: 1.Greedily cover abilities 2. Ensure data diversity. 
@@ -54,15 +55,15 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Deploy the current version of model into a harness as an agent.
 - Use agent to debug training scripts based on the new reward, data, and receipe.
 - Filter the data with difficulty level from data pool. Create a dataset.
-- Smoke run. 1. Ensure reward no hacking. 2. Run some experiment to slightly adjust data mix ratio. 3. finetune Training hyper parameter.
+- Smoke run. 1. Ensure reward no hacking. 2. Ensure data strategy work. 3. finetune Training hyper parameter.
 - Formal Run.
 - Monitoring the metric.(Validation\entropy and so on. Check if some task is saturation. Decide need early stop)
-- Need metrics observe-action strategy： 1. Update data from dataset pool to ensure each domain has sufficient gradient.
-- Go back to filter data step
+- Strategy to action on observe. eg. collect harder data if pass rate too high.
+- Go back to filter data step and continue training.
 - Finally get a new version of checkpoint which is good at validation score.
 
 
 ## 5. Check new checkpoint
-- run benchmark
-- if ok, deploy model with current checkpoint as a inference endpoint. (via vllm\sglang, etc.)return to step 1 and as a loop.
+- run benchmark check if desired domain has been improved.
+- if ok, run OPD to merge new domain abilities to previous checkpoint.
 - if not ok, return to step 2
