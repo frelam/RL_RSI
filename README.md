@@ -63,8 +63,10 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
             <br /> 3. finetune Training hyper parameter.
 - Formal Run.
 - train strategy required(small batchsize and rollout n firstly,then increase them)
-- Monitoring the metric.(Validation\entropy and so on. Check if some task is saturation. Decide need early stop)
-- Strategy to action on observe. eg. collect harder data if pass rate too high.
+- Monitoring the metric.(Validation\entropy and so on. Need a adapter to parse log for different training backend）
+- Strategy to action on observe. 
+eg. 1. Check if some task is saturation. Decide need early stop
+    2. collect harder data if pass rate too high.
 - Go back to filter data step and continue training.
 - Finally get a new version of checkpoint which is good at validation score.
 
