@@ -26,37 +26,37 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 
 **A classical Loop** (May support other loop Orchestration):
 
-## 1. trajectory collect and benchmark.  
+## 1. Collect trajectory/benchmark and analysis failures
 
 - collect trajectory from deploy endpoint during a period of time.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
 - collect newest benchmark and merge into the former benchmark.
-- run benchmark to test model.(via evalscope, etc.)(pass@k\mean@k\response_length）
-- summarize trajectory and benchmark result of the current checkpoint on new data distribution and new benchmark 
+- Collect failure traces and run benchmark to test model.(via evalscope, etc.)(pass@k\mean@k\response_length)
+- Defined a set of foundation capabilities.
+- Summarize which capabilities are missing.(use benchmark maps or LLM judge)
+- Prioritize the missing capabilities based on their foundational nature and importance.
+- deliver missing capabilities map and their priorities.
 
-## 2. analyze bad case(base on P!=NP, verify is easier than generation)
-- Rule-base benchmark analyze. (pattern of low-scoring benchmark combination)
-- About rule-base analyze algorithm： 1. Defining hundreds of basic atomic capabilities. 2. Maintain a mapping between each sub-item of a benchmark and multiple capabilities. 3. If some benchmark sub-item is lower than average, mark the corresponse capabilities as nagative. 4. Use OR operations to synthesize the capability deficiencies reported by various benchmarks. 
-- Using LLM judge to analyze bad case.（Or maybe human judge\multi model judge and vote\teacher judge\self judge）
-- About LLM judge analyze algorithm: Good skills, good prompt, and use some scoring rules to reduce scoring bias.
-- Summarize What capabilities are missing in the model.
-- Separate capabilities into some experts domain. For each domain, run step2.
-
-## 3. collect data for addressing the shortcomings of the model
-- Need some smart algorithm of data collection. eg: 1.Greedily cover abilities 2. Ensure data diversity. 
-- For agentic task: write code to synthesis enviroment or task.
-- For generate task: collect or synthesis data.
-- Collect new Knowledge: collect some new world data. May be world new knowledge, new problem, or use camara to collect real-world events
-- Consider and decide on the data mixing ratio. (Understanding the conflicts and synergies between datasets category. If confict, find Pareto value; If synergies, find best ratio.) Use experiment to find the best ratio.
-- Mix replay data and new data to Create a new dataset pool.
-- Implement the reward corresponding to the dataset pool.
-
+## 2. Determine a new data strategy to fix the model
+- Need some smart algorithm to produce data strategy. 
+  eg: 1.Greedily cover abilities 
+      2.Assign greater data weight to more important and fundamental capabilities.
+      3.Ensure that all affected domains have corresponding data coverage.
+      4.Ensure that data strategies for other dimensions are not significantly affected.
+- Datasource: 1. Private datasets (adapters can be defined to specify data retrieval interfaces)
+              2. from web
+              3. from hf or github
+              4. Synthetic data
+- Combine existing datasets with newly sampled data to synthesize a new dataset (replaying old data to prevent forgetting).
+- Deliver a new dataset and the desired mix ratio.
+- Enhance the reward associated with the data
 
 ## 4. use RL framework to train by model it-self.(via verl, slime, etc.)
-- Deploy the current version of model into a harness as an agent.
-- Use agent to debug training scripts based on the new reward, data, and receipe.
-- Filter the data with difficulty level from data pool. Create a dataset.
-- Smoke run. 1. Ensure reward no hacking. 2. Ensure data strategy work. 3. finetune Training hyper parameter.
+- Filter the data with difficulty level from data pool. If the ratio requirements are not met after filtering, compensate by relaxing the filtering criteria.
+- Smoke run. 1. Ensure reward no hacking. 
+             2. Ensure data strategy work. 
+             3. finetune Training hyper parameter.
 - Formal Run.
+- train strategy required(small batchsize and rollout n firstly,then increase them)
 - Monitoring the metric.(Validation\entropy and so on. Check if some task is saturation. Decide need early stop)
 - Strategy to action on observe. eg. collect harder data if pass rate too high.
 - Go back to filter data step and continue training.
