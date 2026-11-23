@@ -53,8 +53,11 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Enhance the reward associated with the data
 
 ## 4. use RL framework to train by model it-self.(via verl, slime, etc.)
-- Filter the data with difficulty level from data pool. Need some algorithum.
-  e.g. : <br />
+- Filter the data with difficulty level from data pool.
+- efficient filtering algorithm:
+  <br /> 1. rollout n: 4->8->16, according to filter rollout algorithm.
+- maintain data mixing ratio algorithm.
+  e.g. :
  <br /> 1. Iterate through each domain, using its filtered data volume as a benchmark. Calculate the required data volume for other domains based on the proportions. If the criteria are not met, eliminate the proposed solution. Finally, retain the solution with the largest total data volume.
  <br /> 2. If the ratio requirements are not met after filtering, compensate by relaxing the filtering criteria.
 - Smoke run.<br /> 1. Ensure reward no hacking. 
