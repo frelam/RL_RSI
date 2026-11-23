@@ -38,23 +38,28 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 
 ## 2. Determine a new data strategy to fix the model
 - Need some smart algorithm to produce data strategy. 
-  eg: 1.Greedily cover abilities 
-      2.Assign greater data weight to more important and fundamental capabilities.
-      3.Ensure that all affected domains have corresponding data coverage.
-      4.Ensure that data strategies for other dimensions are not significantly affected.
-- Datasource: 1. Private datasets (adapters can be defined to specify data retrieval interfaces)
-              2. from web
-              3. from hf or github
-              4. Synthetic data
+  e.g.:<br />
+      1.Greedily cover abilities <br />
+      2.Assign greater data weight to more important and fundamental capabilities.<br />
+      3.Ensure that all affected domains have corresponding data coverage.<br />
+      4.Ensure that data strategies for other dimensions are not significantly affected.<br />
+- Datasource:<br />
+              1. Private datasets (adapters can be defined to specify data retrieval interfaces)<br />
+              2. from web<br />
+              3. from hf or github<br />
+              4. Synthetic data<br />
 - Combine existing datasets with newly sampled data to synthesize a new dataset (replaying old data to prevent forgetting).
 - Deliver a new dataset and the desired mix ratio.
 - Enhance the reward associated with the data
 
 ## 4. use RL framework to train by model it-self.(via verl, slime, etc.)
-- Filter the data with difficulty level from data pool. If the ratio requirements are not met after filtering, compensate by relaxing the filtering criteria.
-- Smoke run. 1. Ensure reward no hacking. 
-             2. Ensure data strategy work. 
-             3. finetune Training hyper parameter.
+- Filter the data with difficulty level from data pool. Need some algorithum.
+  e.g. : <br />
+ <br /> 1. Iterate through each domain, using its filtered data volume as a benchmark. Calculate the required data volume for other domains based on the proportions. If the criteria are not met, eliminate the proposed solution. Finally, retain the solution with the largest total data volume.
+ <br /> 2. If the ratio requirements are not met after filtering, compensate by relaxing the filtering criteria.
+- Smoke run.<br /> 1. Ensure reward no hacking. 
+            <br /> 2. Ensure data strategy work. 
+            <br /> 3. finetune Training hyper parameter.
 - Formal Run.
 - train strategy required(small batchsize and rollout n firstly,then increase them)
 - Monitoring the metric.(Validation\entropy and so on. Check if some task is saturation. Decide need early stop)
