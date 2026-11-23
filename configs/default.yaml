@@ -242,14 +242,16 @@ data:
     type: capability_weighted
     floor: 0.2
     priority_bonus: 0.5
-    target_total: 0             # 0 => keep everything that passes filters
+    target_total: 0             # 0 => no total cap
     target_band: [0.05, 0.95]
     enforce_band: true
     min_per_group: 1
     max_per_group: 0
     shuffle: true
     preserve_ratio: true
-    relax_by: 0.15
+    ratio_tolerance: 0.10      # absolute share error per group, in [0, 1]
+    relax_by: 0.15             # widen both ends of the difficulty band per step
+    relax_max_steps: 1         # 0 => strict difficulty band only
     # type: history_bandit
     # explore_rounds: 2
     # candidates:

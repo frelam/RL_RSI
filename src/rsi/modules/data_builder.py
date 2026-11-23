@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections import Counter
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,8 @@ from rsi.core.interfaces import DatasetBuilder
 from rsi.core.jsonio import atomic_write_json, now_iso, stable_hash, write_jsonl
 from rsi.core.registry import register
 from rsi.core.types import DataPlan, DataSample, DatasetArtifact
+from rsi.modules.data_mixing import group_key
+from rsi.modules.data_quotas import target_shares
 
 
 @register("dataset_builder", "jsonl")
@@ -44,7 +48,10 @@ class JsonlDatasetBuilder(DatasetBuilder):
         dataset_id = f"ds-r{context.round:04d}-{stable_hash(context.round, [s.id for s in samples], length=8)}"
         seed = stable_hash(self.runtime.seed, context.round, "dataset")
         ordered = sorted(samples, key=lambda sample: stable_hash(seed, sample.id))
-        train_samples, val_samples = self._split_by_capability(ordered, seed)
+        sampler_stats = getattr(context, "sampler_stats", {})
+        shares = target_shares(mixing) if sampler_stats.get("ratio_feasible") else {}
+        tolerance = Fraction(str(sampler_stats.get("ratio_tolerance", 0.0)))
+        train_samples, val_samples = self._split_by_capability(ordered, seed, shares, tolerance)
         rows = [self._row(sample) for sample in ordered]
         train_path = write_jsonl(dataset_dir / "train.jsonl", [self._row(s) for s in train_samples])
         val_path = write_jsonl(dataset_dir / "val.jsonl", [self._row(s) for s in val_samples])
@@ -52,6 +59,12 @@ class JsonlDatasetBuilder(DatasetBuilder):
         reward_spec = self._reward_spec(samples, dataset_id)
         reward_path = atomic_write_json(dataset_dir / "reward_spec.json", reward_spec)
         stats = self._stats(samples, mixing)
+        train_groups = Counter(map(group_key, train_samples))
+        stats["train_group_ratio"] = {
+            group: count / len(train_samples) for group, count in sorted(train_groups.items())
+        }
+        if "ratio_feasible" in sampler_stats:
+            stats["sampler"] = sampler_stats
         manifest = {
             "dataset_id": dataset_id,
             "round": context.round,
@@ -106,14 +119,47 @@ class JsonlDatasetBuilder(DatasetBuilder):
         return max(0, min(count, self.val_max, total - 1))
 
     def _split_by_capability(
-        self, samples: list[DataSample], seed: str
+        self,
+        samples: list[DataSample],
+        seed: str,
+        shares: dict[str, Fraction],
+        tolerance: Fraction,
     ) -> tuple[list[DataSample], list[DataSample]]:
         groups: dict[str, list[DataSample]] = {}
         for sample in samples:
             groups.setdefault(sample.capability, []).append(sample)
+        for name, items in groups.items():
+            items.sort(key=lambda sample: stable_hash(seed, "split", name, sample.id))
         available = sum(max(0, len(items) - 1) for items in groups.values())
         target = min(self._val_count(len(samples)), available)
-        ideals = {name: target * len(items) / len(samples) for name, items in groups.items()}
+        counts = Counter(map(group_key, samples)) if shares else Counter()
+        while True:
+            quotas = self._validation_quotas(groups, len(samples), target)
+            if target == 0 or not shares:
+                break
+            val_counts = Counter(
+                group_key(sample) for name, items in groups.items() for sample in items[:quotas[name]]
+            )
+            if all(
+                abs(Fraction(counts[group] - val_counts[group], len(samples) - target) - share)
+                <= tolerance
+                for group, share in shares.items()
+            ):
+                break
+            target -= 1
+
+        train: list[DataSample] = []
+        validation: list[DataSample] = []
+        for name, items in groups.items():
+            validation.extend(items[:quotas[name]])
+            train.extend(items[quotas[name]:])
+        order = lambda sample: stable_hash(seed, "output", sample.id)
+        return sorted(train, key=order), sorted(validation, key=order)
+
+    def _validation_quotas(
+        self, groups: dict[str, list[DataSample]], total: int, target: int
+    ) -> dict[str, int]:
+        ideals = {name: target * len(items) / total for name, items in groups.items()}
         quotas = {
             name: min(max(0, math.floor(ideals[name])), len(items) - 1)
             for name, items in groups.items()
@@ -126,14 +172,7 @@ class JsonlDatasetBuilder(DatasetBuilder):
             name = max(available, key=lambda group: (ideals[group] - quotas[group], group))
             quotas[name] += 1
             remaining -= 1
-        train: list[DataSample] = []
-        validation: list[DataSample] = []
-        for name, items in groups.items():
-            ordered = sorted(items, key=lambda sample: stable_hash(seed, "split", name, sample.id))
-            validation.extend(ordered[:quotas[name]])
-            train.extend(ordered[quotas[name]:])
-        order = lambda sample: stable_hash(seed, "output", sample.id)
-        return sorted(train, key=order), sorted(validation, key=order)
+        return quotas
 
     def _row(self, sample: DataSample) -> dict[str, Any]:
         messages = [{"role": m.role, "content": m.content} for m in sample.messages]

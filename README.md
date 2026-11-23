@@ -55,10 +55,9 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 ## 4. use RL framework to train by model it-self.(via verl, slime, etc.)
 - Filter the data with difficulty level from data pool.
 - Efficient rollout-based data filtering keeps examples that the current policy solves inconsistently. Under independent samples, at 10% accuracy the all-wrong probability falls from 18.53% at 16 rollouts to 3.43% at 32. Expected work rises from 10.07 to 12.19 completions per candidate (+21%). The 32-rollout extension is enabled when the filter is enabled and can be turned off. See [the feature theory and configuration](docs/adaptive_rollout_filter.md).
-- maintain data mixing ratio algorithm.
-  e.g. :
- <br /> 1. Iterate through each domain, using its filtered data volume as a benchmark. Calculate the required data volume for other domains based on the proportions. If the criteria are not met, eliminate the proposed solution. Finally, retain the solution with the largest total data volume.
- <br /> 2. If the ratio requirements are not met after filtering, compensate by relaxing the filtering criteria.
+- With `data.mixing.preserve_ratio` enabled, select the largest dataset whose integer group quotas fit available samples, group bounds, the total cap, and the configured absolute share tolerance (`ratio_tolerance`, 0.10 by default).
+- Start with the strict difficulty band and widen it by `relax_by` for up to `relax_max_steps` steps. Use the smallest widening that reaches the largest feasible mix, and fill quotas with strict samples first. All candidates must pass the upstream filter pipeline. If no feasible mix exists, training skips that dataset.
+- The JSONL builder may reduce the validation holdout to keep the training mix within tolerance. The dataset manifest records the target, selected, and training shares.
 - Smoke run.<br /> 1. Ensure reward no hacking. 
             <br /> 2. Ensure data strategy work. 
             <br /> 3. finetune Training hyper parameter.

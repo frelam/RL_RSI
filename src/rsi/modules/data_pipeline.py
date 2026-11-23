@@ -22,7 +22,7 @@ from rsi.modules.data_difficulty import (  # noqa: F401 - registers plugins
     RuleDifficultyGrader,
 )
 from rsi.modules.data_filters import FilterPipeline
-from rsi.modules.data_mixing import DiversitySampler
+from rsi.modules.data_mixing import DiversitySampler, group_key
 from rsi.modules.data_plan import DataPlanner
 
 
@@ -39,6 +39,8 @@ class DataContext:
     rng: Any = None
     history: list[dict[str, Any]] = field(default_factory=list)
     mixing_info: dict[str, Any] = field(default_factory=dict)
+    mixing_groups: set[str] | None = None
+    sampler_stats: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -230,12 +232,16 @@ class DataPipeline:
 
             write_jsonl(work_dir / "generated.jsonl", samples)
 
+        if self.sampler.preserve_ratio:
+            # A group with zero surviving samples still contributes to the target.
+            context.mixing_groups = {group_key(sample) for sample in samples}
         kept, decisions, filter_stats = self.filter_pipeline.run(samples, context)
         for sample in kept:
             sample.difficulty = self.grader.grade(sample, context)
         weights = self.mixer.plan(kept, plan, context)
         context.mixing_info = dict(getattr(self.mixer, "last_info", {}) or {})
         selected, sampler_stats = self.sampler.select(kept, weights, context)
+        context.sampler_stats = sampler_stats
         if self.save_intermediate:
             from rsi.core.jsonio import write_jsonl
 

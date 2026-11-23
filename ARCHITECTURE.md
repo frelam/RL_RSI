@@ -133,6 +133,7 @@ src/rsi/
 │   ├── data_filters.py       # PII / 长度 / 格式 / judge / dedup / verifier
 │   ├── data_difficulty.py    # rule / judge / pass-rate / composite
 │   ├── data_mixing.py        # 静态 / 能力加权 / history bandit + 配额采样
+│   ├── data_quotas.py        # 有容量与比例约束的整数配额求解
 │   ├── data_builder.py       # JSONL / verl view / reward spec / manifest
 │   ├── data_pipeline.py      # plan → generate → filter → grade → mix → build
 │   ├── train_monitor.py      # 监控算法、MonitorHub、Supervisor
@@ -358,7 +359,7 @@ DatasetBuilder
 - **训练反馈** 可提高目标难度、调整 reward 权重，并在有限次策略尝试内重建数据集。
 - **目标能力验收** 对候选和现有版本比较同一批 benchmark 项。目标能力必须提高，其他能力退步幅度由 validate.max_other_regression 限制。
 - **OPD** 通过独立配置的 teacher-aware trainer 命令执行，并用 benchmark 对比蒸馏产物与已验证 teacher。
-- **难度带**在采样阶段强制，可按配置有限放宽；比例采样受总量和分组上限约束。
+- **比例采样**以筛选前的分组或策略配置确定目标，使用筛选后的容量求最大整数配额。难度带可逐档放宽，同等总量优先采用更严格的档位。JSONL 构建器可缩小验证集，以便切分后的训练占比仍在容差内。
 - **mixing 实验**：`history_bandit` 先用探索轮次，再根据历史 `validation.delta` 选择候选比例；选择记录在 dataset artifact 和 round record 中，可审计。
 - **reward spec** 按能力生成：catalog 的 `reward` 规则 + 配置覆盖；每条样本的 `verifier` 随数据落盘。
 - **provenance**：source、request_id、defect_id、round、license、文件路径都写入样本 metadata。
