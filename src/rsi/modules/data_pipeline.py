@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from rsi.core.errors import ConfigError
-from rsi.core.jsonio import atomic_write_json, to_plain
-from rsi.core.types import DataPlan, DatasetArtifact, DefectReport
+from rsi.core.jsonio import atomic_write_json, read_jsonl, stable_hash
+from rsi.core.types import ChatMessage, Checkpoint, DataPlan, DataSample, DatasetArtifact, DefectReport
 from rsi.modules.data_builder import JsonlDatasetBuilder  # noqa: F401 - registers plugin
 from rsi.modules.data_collectors import (  # noqa: F401 - registers plugins
     AgenticSynthesisCollector,
@@ -34,6 +34,7 @@ class DataContext:
     collect_result: Any
     defects: DefectReport | None
     work_dir: Path
+    checkpoint: Checkpoint | None = None
     plan: DataPlan | None = None
     rng: Any = None
     history: list[dict[str, Any]] = field(default_factory=list)
@@ -48,6 +49,7 @@ class DataPipelineResult:
     generated: int
     filtered: int
     selected: int
+    replayed: int = 0
     filter_stats: dict[str, Any] = field(default_factory=dict)
     mixing: dict[str, float] = field(default_factory=dict)
     mixing_info: dict[str, Any] = field(default_factory=dict)
@@ -100,6 +102,12 @@ class DataPipeline:
         )
         self.max_generated = self.cfg.get_int("max_generated", 512)
         self.save_intermediate = self.cfg.get_bool("save_intermediate", False)
+        self.replay_cfg = self.cfg.section("replay", required=False)
+        self.replay_fraction = self.replay_cfg.get_float("fraction", 0.0)
+        self.replay_rounds = max(0, self.replay_cfg.get_int("recent_rounds", 1))
+        self.max_replay = max(0, self.replay_cfg.get_int("max_samples", 128))
+        if not math.isfinite(self.replay_fraction) or not 0 <= self.replay_fraction < 1:
+            raise ConfigError("data.replay.fraction must be within [0, 1)")
 
     def validate(self) -> None:
         """Check every prompt referenced by collectors, filters and graders."""
@@ -121,11 +129,18 @@ class DataPipeline:
         defects: DefectReport,
         collect_result: Any,
         state: Any,
+        *,
+        checkpoint: Checkpoint | None = None,
+        difficulty_shift: float | dict[str, float] = 0.0,
+        reward_multiplier: float = 1.0,
+        attempt: int = 0,
     ) -> DataPipelineResult:
         if not self.enabled:
             plan = DataPlan(round=round_no, strategy="disabled", notes="data.enabled=false")
             return DataPipelineResult(round_no, plan, None, 0, 0, 0)
         work_dir = self.runtime.artifacts.stage_dir(round_no, "synthesize")
+        if attempt:
+            work_dir = work_dir / f"attempt-{attempt}"
         context = DataContext(
             round=round_no,
             runtime=self.runtime,
@@ -133,12 +148,37 @@ class DataPipeline:
             collect_result=collect_result,
             defects=defects,
             work_dir=work_dir,
-            rng=self.runtime.rng("data", round_no),
+            checkpoint=checkpoint,
+            rng=self.runtime.rng("data", round_no, attempt),
             history=list(getattr(state, "history", []) or []),
             mixing_info={},
         )
         plan = self.planner.plan(defects, context)
         context.plan = plan
+        plan.metadata.update(
+            attempt=attempt,
+            difficulty_shift=difficulty_shift,
+            reward_multiplier=reward_multiplier,
+        )
+        shifts = difficulty_shift if isinstance(difficulty_shift, dict) else {}
+        for request in plan.requests:
+            shift = (
+                float(shifts.get(request.capability, 0.0))
+                if isinstance(difficulty_shift, dict)
+                else float(difficulty_shift)
+            )
+            if len(request.target_difficulty) != 2:
+                raise ConfigError(f"invalid target_difficulty for {request.id}")
+            low, high = map(float, request.target_difficulty)
+            if not all(math.isfinite(value) for value in (low, high)) or not 0 <= low <= high <= 1:
+                raise ConfigError(f"target_difficulty must be within [0, 1] for {request.id}")
+            request.target_difficulty = [min(1.0, low + shift), min(1.0, high + shift)]
+            if request.target_difficulty[0] > request.target_difficulty[1]:
+                request.target_difficulty[0] = request.target_difficulty[1]
+            if attempt:
+                from rsi.core.jsonio import stable_hash
+
+                request.id = stable_hash(request.id, attempt)
         atomic_write_json(work_dir / "plan.json", plan)
         if not plan.requests:
             result = DataPipelineResult(
@@ -153,11 +193,11 @@ class DataPipeline:
             atomic_write_json(work_dir / "pipeline.json", result)
             return result
 
-        samples = []
+        new_samples: list[DataSample] = []
         errors: list[str] = []
         generated_per_request: dict[str, int] = {}
         for request in plan.requests:
-            if len(samples) >= self.max_generated:
+            if len(new_samples) >= self.max_generated:
                 break
             collector = self.collectors.get(request.kind)
             if collector is None and self.default_collector:
@@ -174,9 +214,17 @@ class DataPipeline:
                 errors.append(f"{request.kind}/{request.id}: {exc}")
                 continue
             produced = produced[: request.count]
+            for sample in produced:
+                sample.metadata["target_difficulty"] = request.target_difficulty
+                reward_hint = dict(request.reward_hint)
+                reward_hint["weight"] = float(reward_hint.get("weight", 1.0)) * reward_multiplier
+                sample.metadata["reward_hint"] = reward_hint
             generated_per_request[request.id] = len(produced)
-            samples.extend(produced)
-        samples = samples[: self.max_generated]
+            new_samples.extend(produced)
+        new_samples = new_samples[: self.max_generated]
+        replay_samples = self._load_replay(context.history, len(new_samples), round_no)
+        plan.metadata["replayed"] = len(replay_samples)
+        samples = replay_samples + new_samples
         if self.save_intermediate:
             from rsi.core.jsonio import write_jsonl
 
@@ -209,9 +257,10 @@ class DataPipeline:
             round=round_no,
             plan=plan,
             dataset=dataset,
-            generated=len(samples),
+            generated=len(new_samples),
             filtered=len(kept),
             selected=len(selected),
+            replayed=len(replay_samples),
             filter_stats=filter_stats,
             mixing=weights,
             mixing_info=context.mixing_info,
@@ -220,7 +269,8 @@ class DataPipeline:
             stats={
                 "generated_per_request": generated_per_request,
                 "requested": plan.total_target,
-                "generated": len(samples),
+                "generated": len(new_samples),
+                "replayed": len(replay_samples),
                 "filtered": len(kept),
                 "selected": len(selected),
                 "dataset_id": dataset.dataset_id if dataset else None,
@@ -232,3 +282,110 @@ class DataPipeline:
 
             write_jsonl(work_dir / "filter_decisions.jsonl", decisions)
         return result
+
+    def _load_replay(
+        self, history: list[dict[str, Any]], new_count: int, round_no: int
+    ) -> list[DataSample]:
+        if (
+            not self.replay_cfg.get_bool("enabled", False)
+            or self.replay_fraction <= 0
+            or new_count <= 0
+        ):
+            return []
+        target = round(new_count * self.replay_fraction / (1 - self.replay_fraction))
+        target = min(target, self.max_replay)
+        if target <= 0:
+            return []
+        replay: list[DataSample] = []
+        seen: set[str] = set()
+        used_rounds = 0
+        for record in reversed(history):
+            if used_rounds >= self.replay_rounds or len(replay) >= target:
+                break
+            dataset_path = (record.get("synthesize") or {}).get("dataset_path")
+            if not dataset_path:
+                continue
+            train_path = Path(dataset_path) / "train.jsonl"
+            if not train_path.exists():
+                continue
+            source_round = int(record.get("round", -1))
+            for row in read_jsonl(train_path):
+                sample = self._sample_from_replay_row(row, source_round)
+                if sample is None:
+                    continue
+                key = stable_hash(sample.prompt)
+                if key not in seen:
+                    seen.add(key)
+                    replay.append(sample)
+            used_rounds += 1
+
+        replay.sort(key=lambda sample: stable_hash(self.runtime.seed, round_no, "replay", sample.id))
+        return replay[:target]
+
+    def _sample_from_replay_row(
+        self, row: dict[str, Any], source_round: int
+    ) -> DataSample | None:
+        extra = row.get("extra_info") if isinstance(row.get("extra_info"), dict) else {}
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        raw_messages = row.get("messages")
+        prompt_value = row.get("prompt", "")
+        if isinstance(prompt_value, list):
+            raw_messages = prompt_value
+            prompt_value = ""
+        messages = [
+            ChatMessage(role=str(item.get("role", "user")), content=str(item.get("content", "")))
+            for item in raw_messages or []
+            if isinstance(item, dict)
+        ]
+        prompt = str(prompt_value or "")
+        if not prompt:
+            prompt = next((message.content for message in messages if message.role == "user"), "")
+        response = str(row.get("response") or "")
+        if not response:
+            response = next(
+                (message.content for message in reversed(messages) if message.role == "assistant"),
+                "",
+            )
+        if not prompt:
+            return None
+        if not messages:
+            messages = [ChatMessage(role="user", content=prompt)]
+        if response and not any(message.role == "assistant" for message in messages):
+            messages.append(ChatMessage(role="assistant", content=response))
+
+        reward_model = row.get("reward_model") if isinstance(row.get("reward_model"), dict) else {}
+        reference = row.get("reference", reward_model.get("ground_truth"))
+        capability = str(row.get("capability") or row.get("ability") or "general")
+        verifier = row.get("verifier") or extra.get("verifier")
+        if verifier is None and reward_model:
+            style = str(reward_model.get("style") or "contains")
+            verifier = {"type": "rule", "name": style}
+        sample_metadata = dict(metadata)
+        sample_metadata.update(replay=True, replayed_from_round=source_round)
+        sample_id = row.get("id") or extra.get("id")
+        if not sample_id:
+            sample_id = stable_hash("replay", source_round, prompt, response)
+        try:
+            difficulty = float(row.get("difficulty", extra.get("difficulty", 0.0)) or 0.0)
+            quality = float(row.get("quality", extra.get("quality", 1.0)) or 0.0)
+        except (TypeError, ValueError):
+            difficulty, quality = 0.0, 1.0
+        return DataSample(
+            id=str(sample_id),
+            kind=str(row.get("kind") or extra.get("kind") or "text"),
+            capability=capability,
+            subcapability=str(row.get("subcapability") or extra.get("subcapability") or ""),
+            prompt=prompt,
+            response=response,
+            reference=None if reference is None else str(reference),
+            messages=messages,
+            verifier=verifier if isinstance(verifier, dict) else None,
+            source=f"replay:{row.get('source') or extra.get('source') or source_round}",
+            difficulty=max(0.0, min(1.0, difficulty)),
+            quality=max(0.0, min(1.0, quality)),
+            reward=row.get("reward"),
+            group=str(row.get("group") or capability),
+            round=source_round,
+            env_path=row.get("env_path") or extra.get("env_path"),
+            metadata=sample_metadata,
+        )

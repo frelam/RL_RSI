@@ -52,6 +52,7 @@ def _sample_from_payload(
         messages = [m.__dict__ for m in _message_list(prompt, response)] if response else [
             {"role": "user", "content": prompt}
         ]
+    reference = raw.get("reference", raw.get("ground_truth"))
     return DataSample(
         id=stable_hash("sample", request.id, prompt, response, len(messages)),
         kind=request.kind,
@@ -59,7 +60,7 @@ def _sample_from_payload(
         subcapability=request.subcapability,
         prompt=prompt,
         response=response,
-        reference=raw.get("reference") or raw.get("ground_truth"),
+        reference=None if reference is None else str(reference),
         messages=[
             ChatMessage(role=str(m.get("role", "user")), content=str(m.get("content", "")))
             for m in messages

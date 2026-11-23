@@ -33,8 +33,11 @@ class _Base(CurriculumPolicy):
         super().__init__(runtime, cfg, **params)
         self.max_capabilities = self.cfg.get_int("max_capabilities", 4)
 
+    def priority(self, defect: Defect) -> float:
+        return defect.severity * defect.confidence * (1 + self.runtime.catalog.priority(defect.capability))
+
     def _limit(self, defects: list[Defect], stage: str, notes: str, excluded: list[dict[str, Any]] | None = None) -> CurriculumDecision:
-        ordered = sorted(defects, key=lambda d: (d.severity * d.confidence), reverse=True)
+        ordered = sorted(defects, key=self.priority, reverse=True)
         selected: list[Defect] = []
         seen: set[str] = set()
         for defect in ordered:
@@ -54,10 +57,10 @@ class _Base(CurriculumPolicy):
 
 
 class SeverityCurriculum(_Base):
-    """Default: highest severity x confidence first."""
+    """Default: rank by severity, confidence and catalog priority."""
 
     def select(self, defects: list[Defect], context: Any) -> CurriculumDecision:
-        return self._limit(defects, "severity", "ordered by severity x confidence")
+        return self._limit(defects, "severity", "ordered by severity, confidence and catalog priority")
 
 
 class FixedOrderCurriculum(_Base):

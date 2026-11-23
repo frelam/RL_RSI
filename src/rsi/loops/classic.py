@@ -11,6 +11,7 @@ from rsi.loops.stages import (
     AnalyzeStage,
     CollectStage,
     DataStage,
+    DistillStage,
     PromoteStage,
     SyncStage,
     TrainStage,
@@ -29,13 +30,17 @@ class ClassicLoop(Loop):
     def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
         super().__init__(runtime, cfg, **params)
         self.stops = StopEvaluator(runtime, runtime.config.section("stop"))
+        validation = ValidateStage(runtime, runtime.config.section("validate"))
+        opd_cfg = runtime.config.child(runtime.config.get_dict("opd", {}), "opd")
+        self.distill = DistillStage(runtime, opd_cfg, validation)
         self.stages: list[Stage] = [
             SyncStage(runtime, cfg),
             CollectStage(runtime, runtime.config.section("collect")),
             AnalyzeStage(runtime, runtime.config.section("analyze")),
             DataStage(runtime, runtime.config.section("data")),
             TrainStage(runtime, runtime.config.section("train")),
-            ValidateStage(runtime, runtime.config.section("validate")),
+            validation,
+            self.distill,
             PromoteStage(runtime, runtime.config.section("checkpoint")),
         ]
         self.on_stage_error = str(cfg.get("on_stage_error", "abort"))
@@ -49,6 +54,12 @@ class ClassicLoop(Loop):
             stage.validate()
 
     def run(self, *, resume: bool = False) -> LoopResult:
+        try:
+            return self._run(resume=resume)
+        finally:
+            self.distill.close()
+
+    def _run(self, *, resume: bool) -> LoopResult:
         path = state_path(self.runtime)
         if path.exists() and resume:
             state = load_state(path)
@@ -88,7 +99,6 @@ class ClassicLoop(Loop):
                 "stages": {},
                 "checkpoint_in": None,
             }
-            stopped_early = False
             for stage in self.stages:
                 result = self._run_stage(stage, ctx)
                 record["stages"][stage.name] = {
@@ -99,6 +109,8 @@ class ClassicLoop(Loop):
                 }
                 if result.data:
                     record[stage.name] = to_plain(result.data)
+                if stage.name == "sync" and result.status == "ok":
+                    record["checkpoint_in"] = result.data["checkpoint_id"]
                 if result.status == "failed":
                     self.runtime.events.emit(
                         "stage_failed",
@@ -120,11 +132,9 @@ class ClassicLoop(Loop):
             record["checkpoint_out"] = ctx.memory.get("checkpoint_out")
             state.round += 1
             state.budget["wall_hours"] = previous_wall_hours + (time.monotonic() - started) / 3600.0
-            training = ctx.memory.get("training")
-            if training is not None:
-                state.budget["gpu_hours"] = float(state.budget.get("gpu_hours") or 0.0) + float(
-                    training.metadata.get("gpu_hours") or 0.0
-                )
+            state.budget["gpu_hours"] = float(state.budget.get("gpu_hours") or 0.0) + ctx.memory.get(
+                "gpu_hours", 0.0
+            )
             decision = self.stops.evaluate(state, record)
             record["stop"] = to_plain(decision)
             state.history.append(record)
@@ -140,8 +150,6 @@ class ClassicLoop(Loop):
             )
             if decision.should_stop:
                 return self._finalize(state, decision.reason, decision.details)
-            if stopped_early:
-                return self._result(state, "stopped")
 
     def _run_stage(self, stage: Stage, ctx: LoopContext) -> StageResult:
         last: StageResult | None = None

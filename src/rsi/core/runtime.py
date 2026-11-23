@@ -330,6 +330,16 @@ class CheckpointManager:
             self._save()
             return checkpoint
 
+    def archive_candidate(self, checkpoint_id: str) -> None:
+        with self._lock:
+            raw = self._data["checkpoints"].get(checkpoint_id)
+            if raw is None:
+                raise RsiError(f"Unknown checkpoint {checkpoint_id!r}")
+            if raw["status"] != "candidate":
+                raise RsiError(f"Expected candidate checkpoint: {checkpoint_id}")
+            raw["status"] = "archived"
+            self._save()
+
     def promote(self, checkpoint_id: str) -> Checkpoint:
         with self._lock:
             if checkpoint_id not in self._data["checkpoints"]:

@@ -102,6 +102,7 @@ class MockTrainer(TrainerBackend):
                 "format": "mock-checkpoint",
                 "source": spec.checkpoint.model_path,
                 "source_id": spec.checkpoint.id,
+                "teacher_id": spec.teacher.id if spec.teacher else None,
                 "round": spec.round,
                 "steps": len(metrics),
                 "seed": spec.seed,
@@ -116,7 +117,8 @@ class MockTrainer(TrainerBackend):
         else:
             duration_gpu_hours = 0.0
         return TrainingResult(
-            job_id=f"mock-train-r{spec.round:04d}",
+            job_id=f"mock-{spec.params.get('phase', 'opd' if spec.teacher else 'train')}"
+                   f"-r{spec.round:04d}-{spec.work_dir.name}-{spec.seed}",
             status=status,
             checkpoint_path=str(checkpoint_dir.resolve()),
             metrics=metrics,
@@ -172,7 +174,7 @@ class CommandTrainer(TrainerBackend):
     def train(self, spec: TrainingSpec, observer: Callable[[dict[str, Any]], Any] | None = None) -> TrainingResult:
         started = time.time()
         variables = {
-            "dataset_dir": str(Path(spec.dataset.path).parent),
+            "dataset_dir": spec.dataset.path,
             "train_path": spec.dataset.train_path,
             "val_path": spec.dataset.val_path,
             "reward_spec": spec.dataset.reward_spec_path,
@@ -183,7 +185,12 @@ class CommandTrainer(TrainerBackend):
             "work_dir": str(spec.work_dir),
             "seed": spec.seed,
         }
-        command = format_template(self.command, variables)
+        variables.update(spec.params)
+        variables.update({f"override_{key}": value
+                          for key, value in spec.params.get("overrides", {}).items()})
+        if spec.teacher is not None:
+            variables["teacher_model_path"] = spec.teacher.model_path
+            variables["teacher_checkpoint_id"] = spec.teacher.id
         output_dir = Path(format_template(self.output_dir_template, variables))
         metrics_path = Path(format_template(self.metrics_path_template, variables))
         if not output_dir.is_absolute():
@@ -191,13 +198,13 @@ class CommandTrainer(TrainerBackend):
         if not metrics_path.is_absolute():
             metrics_path = spec.work_dir / metrics_path
         variables.update({"output_dir": str(output_dir), "metrics_path": str(metrics_path)})
-        # Re-format once so output paths can be referenced in the command.
         command = format_template(self.command, variables)
+        spec.work_dir.mkdir(parents=True, exist_ok=True)
         log_path = spec.work_dir / "train.log"
         proc, log_handle = self.runtime.executor.start(
             command,
             cwd=spec.work_dir,
-            env=self.env,
+            env=format_template(self.env, variables),
             log_path=log_path,
             label="trainer.run",
         )

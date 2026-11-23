@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from pathlib import Path
 from typing import Any
 
@@ -42,10 +43,8 @@ class JsonlDatasetBuilder(DatasetBuilder):
         dataset_dir.mkdir(parents=True, exist_ok=True)
         dataset_id = f"ds-r{context.round:04d}-{stable_hash(context.round, [s.id for s in samples], length=8)}"
         seed = stable_hash(self.runtime.seed, context.round, "dataset")
-        ordered = sorted(samples, key=lambda s: stable_hash(seed, s.id))
-        val_count = self._val_count(len(ordered))
-        val_samples = ordered[:val_count]
-        train_samples = ordered[val_count:]
+        ordered = sorted(samples, key=lambda sample: stable_hash(seed, sample.id))
+        train_samples, val_samples = self._split_by_capability(ordered, seed)
         rows = [self._row(sample) for sample in ordered]
         train_path = write_jsonl(dataset_dir / "train.jsonl", [self._row(s) for s in train_samples])
         val_path = write_jsonl(dataset_dir / "val.jsonl", [self._row(s) for s in val_samples])
@@ -104,8 +103,37 @@ class JsonlDatasetBuilder(DatasetBuilder):
             return 0
         count = int(round(total * self.val_ratio))
         count = max(self.val_min, count) if total > self.val_min else 0
-        count = min(count, self.val_max, total - 1)
-        return max(0, count)
+        return max(0, min(count, self.val_max, total - 1))
+
+    def _split_by_capability(
+        self, samples: list[DataSample], seed: str
+    ) -> tuple[list[DataSample], list[DataSample]]:
+        groups: dict[str, list[DataSample]] = {}
+        for sample in samples:
+            groups.setdefault(sample.capability, []).append(sample)
+        available = sum(max(0, len(items) - 1) for items in groups.values())
+        target = min(self._val_count(len(samples)), available)
+        ideals = {name: target * len(items) / len(samples) for name, items in groups.items()}
+        quotas = {
+            name: min(max(0, math.floor(ideals[name])), len(items) - 1)
+            for name, items in groups.items()
+        }
+        remaining = target - sum(quotas.values())
+        while remaining:
+            available = [name for name, items in groups.items() if quotas[name] < len(items) - 1]
+            if not available:
+                break
+            name = max(available, key=lambda group: (ideals[group] - quotas[group], group))
+            quotas[name] += 1
+            remaining -= 1
+        train: list[DataSample] = []
+        validation: list[DataSample] = []
+        for name, items in groups.items():
+            ordered = sorted(items, key=lambda sample: stable_hash(seed, "split", name, sample.id))
+            validation.extend(ordered[:quotas[name]])
+            train.extend(ordered[quotas[name]:])
+        order = lambda sample: stable_hash(seed, "output", sample.id)
+        return sorted(train, key=order), sorted(validation, key=order)
 
     def _row(self, sample: DataSample) -> dict[str, Any]:
         messages = [{"role": m.role, "content": m.content} for m in sample.messages]
@@ -165,9 +193,11 @@ class JsonlDatasetBuilder(DatasetBuilder):
         default = reward_cfg.get("default") or {"type": "rule", "name": "contains", "weight": 1.0}
         overrides = reward_cfg.get("by_capability") or {}
         by_capability: dict[str, Any] = {}
+        hints = {sample.capability: sample.metadata["reward_hint"]
+                 for sample in samples if sample.metadata.get("reward_hint")}
         for capability in sorted({sample.capability for sample in samples}):
             rule = dict(self.runtime.catalog.reward(capability) or {})
-            rule = {**default, **rule}
+            rule = {**default, **rule, **hints.get(capability, {})}
             if capability in overrides and isinstance(overrides[capability], dict):
                 rule.update(overrides[capability])
             by_capability[capability] = rule

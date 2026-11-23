@@ -237,6 +237,7 @@ class FilterBatch:
     kept: list[DataSample] = field(default_factory=list)
     decisions: list[FilterDecision] = field(default_factory=list)
     dropped: list[DataSample] = field(default_factory=list)
+    stats: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -268,6 +269,7 @@ class TrainingSpec:
     work_dir: Path
     seed: int = 0
     params: dict[str, Any] = field(default_factory=dict)
+    teacher: "Checkpoint | None" = None
 
 
 @dataclass

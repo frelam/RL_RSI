@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import math
 from typing import Any
 
-from rsi.core.errors import ConfigError
 from rsi.core.interfaces import Component
 from rsi.core.jsonio import stable_hash
 from rsi.core.schema import validate_json
@@ -42,7 +40,6 @@ class DataPlanner(Component):
             for defect in defects.defects
             if defect.severity >= self.min_severity
         ]
-        candidates.sort(key=lambda d: (d.severity * d.confidence), reverse=True)
         if not candidates:
             return DataPlan(round=context.round, requests=[], strategy=self.strategy, notes="no defects")
         curriculum = self.curriculum.select(candidates, context)
@@ -73,7 +70,10 @@ class DataPlanner(Component):
         for defect in defects:
             info = self.runtime.catalog.get(defect.capability)
             kind = str(defect.suggested_data.get("kind") or info.get("kind") or self.fallback_kind)
-            count = int(round(self.count_per_defect * (0.6 + defect.severity)))
+            priority = self.runtime.catalog.priority(defect.capability)
+            count = int(round(
+                self.count_per_defect * (0.6 + defect.severity) * (0.75 + 0.5 * priority)
+            ))
             count = max(self.min_count, min(self.max_count, count))
             seeds = list(defect.suggested_data.get("seeds") or info.get("seeds") or [])
             verifier = defect.suggested_data.get("verifier") or info.get("verifier") or {}
@@ -150,11 +150,14 @@ class DataPlanner(Component):
             raw_requests = payload.get("requests") or []
             if not isinstance(raw_requests, list):
                 return None
+            allowed = {defect.capability for defect in defects}
             requests: list[DataRequest] = []
             for index, raw in enumerate(raw_requests[: self.max_requests]):
                 if not isinstance(raw, dict) or not raw.get("capability"):
                     continue
                 capability = str(raw["capability"])
+                if capability not in allowed:
+                    continue
                 kind = str(raw.get("kind") or self.runtime.catalog.kind(capability))
                 count = max(1, min(self.max_count, int(raw.get("count", self.count_per_defect))))
                 difficulty = raw.get("target_difficulty") or self.default_difficulty
@@ -168,7 +171,10 @@ class DataPlanner(Component):
                         kind=kind,
                         count=count,
                         target_difficulty=[float(difficulty[0]), float(difficulty[1])],
-                        constraints={"verifier": self.runtime.catalog.verifier(capability), "source_round": context.round},
+                        constraints={
+                            "verifier": self.runtime.catalog.verifier(capability),
+                            "source_round": context.round,
+                        },
                         seeds=[str(s) for s in (raw.get("seeds") or self.runtime.catalog.seeds(capability))],
                         prompt_id=self.prompt_by_kind.get(kind, ""),
                         reward_hint=self.runtime.catalog.reward(capability),
@@ -176,7 +182,7 @@ class DataPlanner(Component):
                         notes=str(raw.get("notes") or ""),
                     )
                 )
-            if not requests:
+            if {request.capability for request in requests} != allowed:
                 return None
             return DataPlan(
                 round=context.round,

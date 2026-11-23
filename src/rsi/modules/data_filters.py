@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections import Counter
 from typing import Any
 
+from rsi.core.errors import AdapterError, ConfigError
 from rsi.core.interfaces import SampleFilter
 from rsi.core.jsonio import stable_hash
 from rsi.core.registry import register
 from rsi.core.scoring import normalize_text, score_text
-from rsi.core.types import DataSample, FilterBatch, FilterDecision
+from rsi.core.types import ChatMessage, ChatRequest, DataSample, FilterBatch, FilterDecision
+
+_TEXT_SCORERS = {"exact", "contains", "regex", "numeric"}
 
 _DEFAULT_PII = [
     r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
@@ -146,6 +150,7 @@ class DedupFilter(SampleFilter):
         self.ngram = self.cfg.get_int("ngram", 3)
         self.threshold = self.cfg.get_float("threshold", 0.9)
         self.max_index = self.cfg.get_int("max_index", 20000)
+        self.preserve_replay = self.cfg.get_bool("preserve_replay", True)
         self._seen: set[str] = set()
         self._grams: list[tuple[str, set[tuple[str, ...]]]] = []
 
@@ -154,6 +159,19 @@ class DedupFilter(SampleFilter):
         batch_seen: set[str] = set()
         for sample in samples:
             key = stable_hash("dedup", normalize_text(sample.prompt), length=24)
+            if self.preserve_replay and sample.metadata.get("replay"):
+                grams = _ngrams(normalize_text(sample.prompt), self.ngram)
+                batch_seen.add(key)
+                if self.cross_round:
+                    self._seen.add(key)
+                self._grams.append((sample.id, grams))
+                if len(self._grams) > self.max_index:
+                    self._grams.pop(0)
+                batch.kept.append(sample)
+                batch.decisions.append(
+                    FilterDecision(sample.id, True, "dedup", "intentional replay")
+                )
+                continue
             if key in batch_seen or (self.cross_round and key in self._seen):
                 batch.dropped.append(sample)
                 batch.decisions.append(FilterDecision(sample.id, False, "dedup", "exact duplicate"))
@@ -273,7 +291,7 @@ class VerifierFilter(SampleFilter):
                     batch.kept.append(sample)
                     batch.decisions.append(FilterDecision(sample.id, True, "verifier", "unverifiable"))
                 continue
-            if name not in {"exact", "contains", "regex", "numeric"}:
+            if name not in _TEXT_SCORERS:
                 batch.kept.append(sample)
                 batch.decisions.append(FilterDecision(sample.id, True, "verifier", f"deferred:{name}"))
                 continue
@@ -286,6 +304,127 @@ class VerifierFilter(SampleFilter):
                 batch.dropped.append(sample)
                 batch.decisions.append(FilterDecision(sample.id, False, "verifier", f"score {score:.2f}", score=score))
         return batch
+
+
+@register("data_filter", "adaptive_rollout")
+class AdaptiveRolloutFilter(SampleFilter):
+    """Keep prompts whose policy rollouts contain both binary rewards."""
+
+    def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
+        super().__init__(runtime, cfg, **params)
+        self.enabled = self.cfg.get_bool("enabled", True)
+        self.extend_all_wrong_to_32 = self.cfg.get_bool("extend_all_wrong_to_32", True)
+        self.targets = [int(target) for target in self.cfg.get_list("samples", [4, 8, 16])]
+        if not self.targets or sorted(set(self.targets)) != self.targets or self.targets[0] < 1:
+            raise ConfigError("adaptive_rollout.samples must contain increasing positive counts")
+        self.temperature = self.cfg.get_float("temperature", 0.7)
+        self.max_tokens = self.cfg.get_int("max_tokens", 1024)
+        self.on_error = str(self.cfg.get("on_error", "keep"))
+        self.preserve_replay = self.cfg.get_bool("preserve_replay", True)
+        if not math.isfinite(self.temperature) or self.temperature < 0 or self.max_tokens < 1:
+            raise ConfigError("adaptive_rollout needs a non-negative temperature and positive max_tokens")
+        if self.on_error not in {"keep", "drop"}:
+            raise ConfigError("adaptive_rollout.on_error must be 'keep' or 'drop'")
+
+    def filter(self, samples: list[DataSample], context: Any) -> FilterBatch:
+        if not self.enabled:
+            return _empty_batch(samples)
+
+        batch = FilterBatch()
+        outcomes: Counter[str] = Counter()
+        targets: Counter[int] = Counter()
+        requested = 0
+        received = 0
+        for sample in samples:
+            if self.preserve_replay and sample.metadata.get("replay"):
+                batch.kept.append(sample)
+                batch.decisions.append(
+                    FilterDecision(sample.id, True, "adaptive_rollout", "intentional replay")
+                )
+                outcomes["replay"] += 1
+                continue
+            verifier = sample.verifier or {}
+            scorer = str(verifier.get("name") or verifier.get("type") or "contains")
+            reference = sample.reference
+            if sample.kind == "agentic" or not sample.prompt.strip():
+                status = "unsupported_sample"
+            elif reference is None or not str(reference).strip() or scorer not in _TEXT_SCORERS:
+                status = "unverifiable"
+            else:
+                status, evidence = self._probe(sample, str(reference), scorer, verifier, context)
+                sample.metadata["adaptive_rollout"] = evidence
+                requested += evidence["requested"]
+                received += evidence["received"]
+                targets.update(evidence["targets"])
+
+            outcomes[status] += 1
+            keep = status in {"mixed", "unsupported_sample", "unverifiable"}
+            if status == "error":
+                keep = self.on_error == "keep"
+            (batch.kept if keep else batch.dropped).append(sample)
+            batch.decisions.append(FilterDecision(sample.id, keep, "adaptive_rollout", status))
+
+        batch.stats = {
+            "outcomes": dict(outcomes),
+            "requests_by_target": {str(target): count for target, count in sorted(targets.items())},
+            "completions_requested": requested,
+            "completions_received": received,
+        }
+        return batch
+
+    def _probe(
+        self, sample: DataSample, reference: str, scorer: str, verifier: dict[str, Any], context: Any
+    ) -> tuple[str, dict[str, Any]]:
+        messages = list(sample.messages)
+        if messages and messages[-1].role == "assistant":
+            messages.pop()
+        if not any(message.role == "user" for message in messages):
+            messages = [ChatMessage(role="user", content=sample.prompt)]
+        targets = list(self.targets)
+        requested = received = scored = correct = 0
+        attempted: list[int] = []
+        try:
+            inference = self.runtime.inference()
+            checkpoint = getattr(context, "checkpoint", None)
+            if checkpoint is not None:
+                inference.ensure(checkpoint)
+            if self.extend_all_wrong_to_32 and targets[-1] < 32:
+                targets.extend(target for target in (24, 32) if target > targets[-1])
+            for target in targets:
+                if target > self.targets[-1] and correct:
+                    break
+                n = target - scored
+                requested += n
+                attempted.append(target)
+                texts = inference.chat(
+                    ChatRequest(
+                        messages=messages,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                        n=n,
+                        metadata={"purpose": "adaptive_rollout", "sample_id": sample.id},
+                    )
+                ).texts
+                received += len(texts)
+                if len(texts) != n:
+                    raise AdapterError(f"requested {n} rollout completions, received {len(texts)}")
+                correct += sum(score_text(text, reference, scorer, verifier) == 1.0 for text in texts)
+                scored = target
+                sample.metadata["difficulty"] = 1.0 - correct / scored
+                if 0 < correct < scored:
+                    break
+            status = "all_wrong" if correct == 0 else "all_correct" if correct == scored else "mixed"
+        except Exception as exc:  # noqa: BLE001 - one probe should not stop data synthesis
+            self.logger.warning("adaptive rollout failed for %s: %s", sample.id, exc)
+            status = "error"
+        return status, {
+            "outcome": status,
+            "targets": attempted,
+            "requested": requested,
+            "received": received,
+            "scored": scored,
+            "correct": correct,
+        }
 
 
 @register("data_filter", "pattern")
@@ -339,6 +478,7 @@ class FilterPipeline:
             decisions.extend(batch.decisions)
             reasons = Counter(d.reason for d in batch.decisions if not d.keep)
             stats[name] = {
+                **batch.stats,
                 "input": before,
                 "kept": len(current),
                 "dropped": before - len(current),

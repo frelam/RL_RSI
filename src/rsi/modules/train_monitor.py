@@ -246,12 +246,14 @@ class MonitorHub:
             child = cfg.child(spec, name)
             self.algorithms.append(runtime.build("monitor", spec, child))
         self.stop_on_critical = cfg.get_bool("stop_on_critical", True)
+        self.stop_on_saturation = cfg.get_bool("stop_on_saturation", True)
         self.history: list[dict[str, Any]] = []
         self.findings: dict[str, Finding] = {}
 
     def observe(self, record: dict[str, Any]) -> str | None:
         self.history.append(record)
         critical = False
+        saturation = False
         for algorithm in self.algorithms:
             try:
                 findings = algorithm.observe(self.history)
@@ -261,7 +263,9 @@ class MonitorHub:
                 self.findings[finding.code] = finding
                 if finding.severity == "critical":
                     critical = True
-        if critical and self.stop_on_critical:
+                if finding.code == "saturation" and finding.suggestion.get("early_stop"):
+                    saturation = True
+        if (critical and self.stop_on_critical) or (saturation and self.stop_on_saturation):
             return "stop"
         return None
 

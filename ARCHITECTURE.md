@@ -192,7 +192,7 @@ src/rsi/
 
 ### 6.1 Classic Loop
 
-`ClassicLoop` 由 7 个 Stage 顺序组成，每个 Stage 的输入来自 `LoopContext.memory` 或 run state：
+`ClassicLoop` 由 8 个 Stage 顺序组成，每个 Stage 的输入来自 `LoopContext.memory` 或 run state：
 
 ```text
 sync       读取 current checkpoint，确保 inference endpoint 可用
@@ -201,8 +201,9 @@ analyze    rule + LLM judge (+ 可选 harness) → 融合后的 DefectReport
 synthesize plan → collectors → filters → difficulty → mixing → dataset
 train      trainer 运行；MonitorHub 实时观察；Supervisor 判定重试/使用/丢弃
 validation 在候选 checkpoint 上跑 benchmark（或退回 trainer 指标）
-promote    接受则 publish+promote；否则 reject，保留 current
-stop       评估停止策略
+opd        可选 teacher-aware command adapter；以已验证 checkpoint 为基准评估
+promote    晋升已接受 checkpoint；否则拒绝并保留现有版本
+stop policy 在整轮结束后评估，不属于 Stage
 ```
 
 每一轮记录写入 `state.json.history`，包含 `checkpoint_in`、各阶段摘要、`validation.score/delta/accepted`、`stop`。失败阶段不会写入历史；`state.status=failed`，`--resume` 可重试。
@@ -238,8 +239,9 @@ runs/<run_id>/
     ├── collect/             # benchmark 报告、trajectories
     ├── analyze/             # 分方法 defects + 合并结果
     ├── synthesize/          # plan、pipeline 统计、dataset/
-    ├── train/attempt-0/     # metrics.jsonl、training.json、checkpoint/
-    ├── validation/          # 候选 checkpoint 的 benchmark、validation.json
+    ├── train/strategy-0/    # metrics, findings and checkpoint per strategy attempt
+    ├── opd/                 # optional distillation output and teacher comparison
+    ├── validation/          # candidate and incumbent benchmarks, validation.json
     └── promote/             # promotion.json
 ```
 
@@ -333,10 +335,10 @@ Collectors
    └── knowledge_ingest    本地语料分块 → 有 provenance 的 QA
    ▼
 FilterPipeline
-   format → PII → length → judge_quality → dedup → verifier → pattern
+   format → PII → length → judge_quality → dedup → verifier → pattern → optional adaptive_rollout
    ▼
 DifficultyGrader
-   rule / judge / pass-rate（1 - 当前能力分）/ composite
+   rule / judge / pass-rate（1 - 当前能力分）/ rollout / composite
    ▼
 MixingStrategy + DiversitySampler
    static / capability_weighted / history_bandit
@@ -350,8 +352,13 @@ DatasetBuilder
 要点：
 
 - **课程策略**单独成模块：`severity` 按 `severity×confidence`，`fixed` 按能力顺序逐轮解锁，`prerequisite` 在前置能力达到阈值前锁定后续能力。
+- **历史 replay** 从近期轮次的 train.jsonl 按比例抽样，排除 val.jsonl，并在配比采样时保留其原能力分组。
 - **去重是跨轮次的**（`DedupFilter` 实例常驻），避免每轮重复合成同一批数据。
-- **难度带**在采样阶段强制，避免全部数据挤在简单或极难区间。
+- **自适应 rollout** 是可选数据过滤器。当前策略按 4、8、16 个回答逐步估计可验证题目难度，保留结果有对有错的题目，可将全错题扩展到 32 个回答。
+- **训练反馈** 可提高目标难度、调整 reward 权重，并在有限次策略尝试内重建数据集。
+- **目标能力验收** 对候选和现有版本比较同一批 benchmark 项。目标能力必须提高，其他能力退步幅度由 validate.max_other_regression 限制。
+- **OPD** 通过独立配置的 teacher-aware trainer 命令执行，并用 benchmark 对比蒸馏产物与已验证 teacher。
+- **难度带**在采样阶段强制，可按配置有限放宽；比例采样受总量和分组上限约束。
 - **mixing 实验**：`history_bandit` 先用探索轮次，再根据历史 `validation.delta` 选择候选比例；选择记录在 dataset artifact 和 round record 中，可审计。
 - **reward spec** 按能力生成：catalog 的 `reward` 规则 + 配置覆盖；每条样本的 `verifier` 随数据落盘。
 - **provenance**：source、request_id、defect_id、round、license、文件路径都写入样本 metadata。
@@ -416,14 +423,14 @@ DatasetBuilder
 
 ### 接受/拒绝
 
-`validation` 默认跑 benchmark（如果 inference adapter 支持切换 checkpoint），否则退回 trainer 的 `val_score`。候选必须满足：
+`validation` 在 inference 支持切换 checkpoint 时，用同一组 benchmark 项配对比较候选和现有版本；否则使用 trainer 指标。
 
 ```text
 score >= baseline + validate.min_delta
-baseline = best accepted score（首轮为当前 collect 的 mean_score）
+每个目标能力都必须改善；非目标能力退步不得超过 validate.max_other_regression。
 ```
 
-`validate.allow_regression=false` 时不允许用更差的候选替换 best。拒绝的候选仍保留在 registry 中（`rejected`），便于审计，但不会成为 current。
+validate.target_min_delta 和 validate.max_other_regression 控制目标能力改善与其他能力的回退上限。拒绝的候选保留在 registry 供审计，但不会成为 current。OPD 产物未通过 benchmark 对比时保留已验证的 teacher。
 
 ## 12. 停止条件
 

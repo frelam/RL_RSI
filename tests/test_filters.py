@@ -6,10 +6,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from rsi.core.config import Config
-from rsi.core.types import DataSample
-from rsi.modules.data_difficulty import RuleDifficultyGrader
+from rsi.core.types import ChatResponse, DataSample
+from rsi.modules.data_difficulty import RolloutDifficultyGrader, RuleDifficultyGrader
 from rsi.modules.data_filters import (
     DedupFilter,
+    AdaptiveRolloutFilter,
     FilterPipeline,
     FormatFilter,
     JudgeQualityFilter,
@@ -94,6 +95,117 @@ class FilterTests(unittest.TestCase):
         batch = verifier.filter([good, bad, no_ref], self.ctx)
         self.assertEqual([s.id for s in batch.kept], ["s1"])
         self.assertEqual(len(batch.dropped), 2)
+
+    def test_adaptive_rollout_stops_at_first_mixed_batch(self) -> None:
+        class FakeInference:
+            def __init__(self) -> None:
+                self.requests: list[int] = []
+
+            def chat(self, request):
+                self.requests.append(request.n)
+                answers = ["42", "wrong", "42", "wrong"]
+                return ChatResponse(texts=answers[: request.n], model="test")
+
+        inference = FakeInference()
+        self.runtime.inference = lambda: inference
+        rollout_filter = AdaptiveRolloutFilter(self.runtime, cfg({}))
+        sample = make_sample("mixed", response="answer", reference="42", verifier={"name": "exact"})
+
+        batch = rollout_filter.filter([sample], self.ctx)
+
+        self.assertEqual(sample.metadata["adaptive_rollout"]["outcome"], "mixed")
+        self.assertEqual([item.id for item in batch.kept], ["mixed"])
+        self.assertEqual(inference.requests, [4])
+        self.assertEqual(sample.metadata["adaptive_rollout"]["correct"], 2)
+        self.assertEqual(batch.stats["completions_requested"], 4)
+
+    def test_adaptive_rollout_extends_all_wrong_to_32(self) -> None:
+        class FakeInference:
+            def __init__(self) -> None:
+                self.requests: list[int] = []
+
+            def chat(self, request):
+                self.requests.append(request.n)
+                return ChatResponse(texts=["wrong"] * request.n, model="test")
+
+        inference = FakeInference()
+        self.runtime.inference = lambda: inference
+        rollout_filter = AdaptiveRolloutFilter(self.runtime, cfg({"extend_all_wrong_to_32": True}))
+        sample = make_sample("wrong", response="answer", reference="42", verifier={"name": "exact"})
+
+        batch = rollout_filter.filter([sample], self.ctx)
+
+        self.assertEqual(sample.metadata["adaptive_rollout"]["outcome"], "all_wrong")
+        self.assertEqual(batch.kept, [])
+        self.assertEqual(inference.requests, [4, 4, 8, 8, 8])
+        self.assertEqual(sample.metadata["adaptive_rollout"]["scored"], 32)
+        self.assertEqual(
+            batch.stats["requests_by_target"], {"4": 1, "8": 1, "16": 1, "24": 1, "32": 1}
+        )
+        self.assertEqual(batch.stats["completions_requested"], 32)
+
+    def test_adaptive_rollout_stops_extension_when_24th_completion_is_correct(self) -> None:
+        class FakeInference:
+            def __init__(self) -> None:
+                self.requests: list[int] = []
+                self.answers = ["wrong"] * 23 + ["42"]
+
+            def chat(self, request):
+                self.requests.append(request.n)
+                answers = self.answers[: request.n]
+                self.answers = self.answers[request.n :]
+                return ChatResponse(texts=answers, model="test")
+
+        inference = FakeInference()
+        self.runtime.inference = lambda: inference
+        rollout_filter = AdaptiveRolloutFilter(self.runtime, cfg({"extend_all_wrong_to_32": True}))
+        sample = make_sample("correct-at-24", response="answer", reference="42", verifier={"name": "exact"})
+
+        batch = rollout_filter.filter([sample], self.ctx)
+
+        self.assertEqual(batch.kept, [sample])
+        self.assertEqual(inference.requests, [4, 4, 8, 8])
+        self.assertEqual(sample.metadata["adaptive_rollout"]["scored"], 24)
+        self.assertEqual(batch.stats["completions_requested"], 24)
+
+    def test_adaptive_rollout_preserves_unverifiable_and_is_opt_in(self) -> None:
+        class FakeInference:
+            def chat(self, request):
+                raise AssertionError("an unverifiable sample must not trigger inference")
+
+        self.runtime.inference = lambda: FakeInference()
+        rollout_filter = AdaptiveRolloutFilter(self.runtime, cfg({"enabled": False}))
+        sample = make_sample("missing-reference", reference=None)
+
+        batch = rollout_filter.filter([sample], self.ctx)
+
+        self.assertEqual(batch.kept, [sample])
+        self.assertEqual(len(batch.decisions), 1)
+        self.assertTrue(batch.decisions[0].keep)
+
+    def test_rollout_grader_reuses_filter_metadata_without_extra_inference(self) -> None:
+        class NoInference:
+            def ensure(self, checkpoint):
+                raise AssertionError("filter metadata should be reused")
+
+            def chat(self, request):
+                raise AssertionError("filter metadata should be reused")
+
+        self.runtime.inference = lambda: NoInference()
+        grader = RolloutDifficultyGrader(
+            self.runtime,
+            cfg({"samples": [4, 8, 16], "probe_missing": False, "blend_rule": 0.0}),
+        )
+        sample = make_sample(
+            "measured",
+            reference="42",
+            verifier={"type": "rule", "name": "exact"},
+            metadata={"adaptive_rollout": {"scored": 4, "correct": 1}},
+        )
+
+        score = grader.grade(sample, SimpleNamespace(round=0, collect_result=None))
+
+        self.assertEqual(score, 0.75)
 
     def test_rule_difficulty_is_bounded_and_ordered(self) -> None:
         grader = RuleDifficultyGrader(self.runtime, cfg({}))

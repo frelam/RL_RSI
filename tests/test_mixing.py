@@ -88,6 +88,47 @@ class MixingTests(unittest.TestCase):
         self.assertTrue(all(item.group == "a" for item in selected))
         self.assertEqual(stats["band_dropped"], 2)
 
+    def test_ratio_sampler_respects_total_and_group_capacity(self) -> None:
+        sampler = DiversitySampler(
+            self.runtime,
+            cfg({
+                "target_total": 4,
+                "min_per_group": 1,
+                "max_per_group": 2,
+                "target_band": [0.0, 1.0],
+                "preserve_ratio": True,
+            }),
+        )
+        samples = [sample("a1", "a"), sample("a2", "a")] + [sample(f"b{i}", "b") for i in range(1, 8)]
+        selected, stats = sampler.select(
+            samples, {"a": 9.0, "b": 1.0}, SimpleNamespace(round=0)
+        )
+        counts = stats["groups"]
+        self.assertEqual(len(selected), 4)
+        self.assertEqual(counts, {"a": 2, "b": 2})
+        self.assertLessEqual(counts["a"], 2)
+        self.assertLessEqual(counts["b"], 2)
+
+    def test_ratio_sampler_relaxes_difficulty_band_to_preserve_groups(self) -> None:
+        sampler = DiversitySampler(
+            self.runtime,
+            cfg({
+                "target_total": 0,
+                "min_per_group": 1,
+                "target_band": [0.4, 0.6],
+                "preserve_ratio": True,
+                "relax_by": 0.2,
+            }),
+        )
+        exact = sample("exact", "a", 0.5)
+        near = sample("near", "b", 0.75)
+        selected, stats = sampler.select(
+            [exact, near], {"a": 1.0, "b": 1.0}, SimpleNamespace(round=0)
+        )
+        self.assertEqual({item.id for item in selected}, {"exact", "near"})
+        self.assertEqual(stats["relaxed_selected"], 1)
+        self.assertEqual(stats["band_dropped"], 0)
+
     def test_diversity_sampler_keeps_all_when_target_zero(self) -> None:
         sampler = DiversitySampler(
             self.runtime,

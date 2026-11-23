@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from rsi.core.interfaces import MixingStrategy
@@ -89,11 +90,15 @@ class HistoryBanditMixing(MixingStrategy):
         if context.round >= self.explore_rounds:
             scores: dict[int, list[float]] = {}
             for record in history:
-                index = (record.get("data") or {}).get("mixing_candidate")
+                index = (record.get("synthesize") or record.get("data") or {}).get("mixing_candidate")
                 delta = (record.get("validation") or {}).get("delta")
-                if index is None or delta is None:
+                try:
+                    index, delta = int(index), float(delta)
+                except (TypeError, ValueError):
                     continue
-                scores.setdefault(int(index), []).append(float(delta))
+                if not 0 <= index < len(self.candidates) or not math.isfinite(delta):
+                    continue
+                scores.setdefault(index, []).append(delta)
             if scores:
                 choice = max(
                     scores,
@@ -124,63 +129,109 @@ class DiversitySampler:
         self.min_per_group = cfg.get_int("min_per_group", 1)
         self.max_per_group = cfg.get_int("max_per_group", 0)
         self.band = [float(v) for v in cfg.get_list("target_band", [0.0, 1.0])]
+        valid_band = (
+            len(self.band) == 2
+            and all(math.isfinite(value) for value in self.band)
+            and 0 <= self.band[0] <= self.band[1] <= 1
+        )
+        if not valid_band:
+            raise ValueError("mixing.target_band must be an ordered pair within [0, 1]")
         self.enforce_band = cfg.get_bool("enforce_band", True)
         self.shuffle = cfg.get_bool("shuffle", True)
+        self.preserve_ratio = cfg.get_bool("preserve_ratio", False)
+        self.relax_by = cfg.get_float("relax_by", 0.15)
+        if not math.isfinite(self.relax_by) or self.relax_by < 0:
+            raise ValueError("mixing.relax_by must be non-negative")
         self.last_stats: dict[str, Any] = {}
 
     def select(
         self, samples: list[DataSample], weights: dict[str, float], context: Any
     ) -> tuple[list[DataSample], dict[str, Any]]:
-        low, high = (self.band + [0.0, 1.0])[:2]
-        banded: list[DataSample] = []
-        band_dropped = 0
-        for sample in samples:
-            if self.enforce_band and not (low <= sample.difficulty <= high):
-                band_dropped += 1
-                continue
-            banded.append(sample)
-        groups: dict[str, list[DataSample]] = {}
-        for sample in banded:
-            groups.setdefault(group_key(sample), []).append(sample)
+        low, high = self.band
+        strict: dict[str, list[DataSample]] = {}
+        relaxed: dict[str, list[DataSample]] = {}
         rng_seed = stable_hash(self.runtime.seed, context.round, "sampler")
-        for group in groups:
-            groups[group].sort(key=lambda s: stable_hash(rng_seed, group, s.id))
+        for sample in sorted(samples, key=lambda item: stable_hash(rng_seed, item.id)):
+            group = group_key(sample)
+            bounds = sample.metadata.get("target_difficulty", [0.0, 1.0])
+            lower, upper = max(low, bounds[0]), min(high, bounds[1])
+            if not self.enforce_band or lower <= sample.difficulty <= upper:
+                strict.setdefault(group, []).append(sample)
+            elif self.preserve_ratio and lower - self.relax_by <= sample.difficulty <= upper + self.relax_by:
+                relaxed.setdefault(group, []).append(sample)
 
-        if self.target_total <= 0:
-            selected = list(banded)
+        groups = strict
+        if self.preserve_ratio:
+            expanded = {group: strict.get(group, []) + relaxed.get(group, [])
+                        for group in sorted(set(strict) | set(relaxed) | set(weights))}
+            quotas = self._ratio_quotas(strict, weights)
+            relaxed_quotas = self._ratio_quotas(expanded, weights)
+            if sum(relaxed_quotas.values()) > sum(quotas.values()):
+                groups, quotas = expanded, relaxed_quotas
+        elif self.target_total <= 0:
+            quotas = {group: self._capacity(items) for group, items in groups.items()}
         else:
-            total_weight = sum(max(0.0, weights.get(group, 0.0)) for group in groups) or 1.0
-            quotas: dict[str, int] = {}
-            for group in groups:
-                share = max(0.0, weights.get(group, 0.0)) / total_weight
-                quota = int(round(share * self.target_total))
-                quota = max(self.min_per_group, quota) if groups[group] else quota
-                if self.max_per_group > 0:
-                    quota = min(quota, self.max_per_group)
-                quotas[group] = min(quota, len(groups[group]))
-            selected = []
-            for group, quota in quotas.items():
-                selected.extend(groups[group][:quota])
-            if len(selected) < self.target_total:
-                remaining = [
-                    sample
-                    for group in groups
-                    for sample in groups[group][quotas.get(group, 0) :]
-                ]
-                remaining.sort(key=lambda s: stable_hash(rng_seed, "fill", s.id))
-                selected.extend(remaining[: self.target_total - len(selected)])
+            quotas = {group: 0 for group in groups}
+            for _ in range(self.target_total):
+                available = [group for group, items in groups.items()
+                             if quotas[group] < self._capacity(items)]
+                if not available:
+                    break
+                group = max(available, key=lambda name: (
+                    quotas[name] < self.min_per_group,
+                    max(0.0, weights.get(name, 0.0)) / (quotas[name] + 1),
+                    name,
+                ))
+                quotas[group] += 1
+        selected = [sample for group, items in groups.items() for sample in items[:quotas.get(group, 0)]]
         if self.shuffle:
             selected.sort(key=lambda s: stable_hash(rng_seed, "final", s.id))
         counts: dict[str, int] = {}
         for sample in selected:
             counts[group_key(sample)] = counts.get(group_key(sample), 0) + 1
+        relaxed_selected = sum(
+            max(0, count - len(strict.get(group, []))) for group, count in counts.items()
+        )
         stats = {
             "input": len(samples),
-            "band_dropped": band_dropped,
+            "band_dropped": len(samples) - sum(map(len, strict.values())) - relaxed_selected,
             "selected": len(selected),
             "groups": counts,
             "target_total": self.target_total,
             "band": [low, high],
+            "relaxed_selected": relaxed_selected,
         }
         self.last_stats = stats
         return selected, stats
+
+    def _capacity(self, items: list[DataSample]) -> int:
+        return min(len(items), self.max_per_group) if self.max_per_group > 0 else len(items)
+
+    def _ratio_quotas(
+        self, groups: dict[str, list[DataSample]], weights: dict[str, float]
+    ) -> dict[str, int]:
+        active = sorted(group for group, weight in weights.items() if weight > 0)
+        capacities = {group: self._capacity(groups.get(group, [])) for group in active}
+        if not active or any(capacities[group] < self.min_per_group for group in active):
+            return {}
+        total_weight = sum(weights[group] for group in active)
+        if not math.isfinite(total_weight) or total_weight <= 0:
+            return {}
+        available = sum(capacities[group] for group in active)
+        target = min(self.target_total, available) if self.target_total > 0 else available
+        quotas = {group: 0 for group in active}
+        minimums = {group: min(self.min_per_group, capacities[group]) for group in active}
+        if target >= sum(minimums.values()):
+            quotas.update(minimums)
+        for _ in range(target - sum(quotas.values())):
+            available_groups = [
+                group for group in active if quotas[group] < capacities[group]
+            ]
+            if not available_groups:
+                break
+            group = max(
+                available_groups,
+                key=lambda name: (weights[name] / (quotas[name] + 1), name),
+            )
+            quotas[group] += 1
+        return quotas

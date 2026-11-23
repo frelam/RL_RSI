@@ -5,8 +5,9 @@ import re
 from typing import Any
 
 from rsi.core.interfaces import DifficultyGrader
+from rsi.core.scoring import score_text
 from rsi.core.registry import register
-from rsi.core.types import DataSample, LLMRequest
+from rsi.core.types import ChatMessage, ChatRequest, DataSample, LLMRequest
 
 _REASONING_MARKERS = [
     "because",
@@ -132,6 +133,56 @@ class PassRateDifficultyGrader(DifficultyGrader):
                 if self.blend_rule > 0:
                     value = (1 - self.blend_rule) * value + self.blend_rule * _rule_difficulty(sample, self.cfg)
         return max(0.0, min(1.0, value))
+
+
+@register("difficulty", "rollout")
+class RolloutDifficultyGrader(PassRateDifficultyGrader):
+    """Probe verifiable prompts with batches of increasing cumulative size."""
+
+    def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
+        super().__init__(runtime, cfg, **params)
+        self.batches = [int(n) for n in cfg.get_list("samples", [4, 8, 16])]
+        self.max_tokens = cfg.get_int("max_tokens", 512)
+        self.probe_missing = self.cfg.get_bool("probe_missing", False)
+        if not self.batches or sorted(set(self.batches)) != self.batches or self.batches[0] < 1:
+            raise ValueError("difficulty.samples must contain increasing positive rollout sizes")
+        if self.max_tokens < 1:
+            raise ValueError("difficulty.max_tokens must be positive")
+
+    def grade(self, sample: DataSample, context: Any) -> float:
+        verifier = sample.verifier or {}
+        if not sample.reference or verifier.get("type", "rule") != "rule":
+            return super().grade(sample, context)
+        rollout = sample.metadata.get("adaptive_rollout") or {}
+        if rollout.get("scored"):
+            value = 1.0 - float(rollout["correct"]) / float(rollout["scored"])
+            if self.blend_rule > 0:
+                value = (1 - self.blend_rule) * value + self.blend_rule * _rule_difficulty(sample, self.cfg)
+            return max(0.0, min(1.0, value))
+        if not self.probe_missing or getattr(context, "checkpoint", None) is None:
+            return super().grade(sample, context)
+        inference = self.runtime.inference()
+        inference.ensure(context.checkpoint)
+        successes = count = 0
+        low, high = sample.metadata.get("target_difficulty", [0.0, 1.0])
+        for total in self.batches:
+            requested = total - count
+            response = inference.chat(ChatRequest(
+                messages=[ChatMessage(role="user", content=sample.prompt)],
+                n=requested,
+                max_tokens=self.max_tokens,
+                temperature=0.7,
+            ))
+            texts = response.texts[:requested]
+            successes += sum(
+                score_text(text, sample.reference, verifier.get("name", "contains"), verifier) >= 1.0
+                for text in texts
+            )
+            count += len(texts)
+            if count >= total and 0 < successes < count and low <= 1 - successes / count <= high:
+                break
+        sample.metadata["difficulty_rollout"] = {"samples": count, "successes": successes}
+        return 1 - successes / count if count else super().grade(sample, context)
 
 
 @register("difficulty", "composite")

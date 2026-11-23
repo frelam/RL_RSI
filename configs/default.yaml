@@ -136,6 +136,12 @@ data:
   enabled: true
   save_intermediate: false
   max_generated: 256
+  # Reuse prior train.jsonl rows only. Validation rows are never replayed.
+  replay:
+    enabled: true
+    fraction: 0.2
+    recent_rounds: 1
+    max_samples: 128
   default_collector: text
   plan:
     strategy: rule              # rule | llm
@@ -212,14 +218,26 @@ data:
       - type: pattern
         patterns:
           - "(?i)as an ai language model"
+      # Optional policy rollouts filter verifiable prompts by task difficulty.
+      - type: adaptive_rollout
+        enabled: false
+        samples: [4, 8, 16]
+        temperature: 0.7
+        max_tokens: 1024
+        extend_all_wrong_to_32: true
+        on_error: keep
   difficulty:
     type: composite
     graders:
       - type: rule
-        weight: 0.6
+        weight: 0.45
       - type: pass_rate
-        weight: 0.4
+        weight: 0.35
         blend_rule: 0.2
+      - type: rollout
+        weight: 0.2
+        samples: [4, 8, 16]
+        probe_missing: false
   mixing:
     type: capability_weighted
     floor: 0.2
@@ -230,6 +248,8 @@ data:
     min_per_group: 1
     max_per_group: 0
     shuffle: true
+    preserve_ratio: true
+    relax_by: 0.15
     # type: history_bandit
     # explore_rounds: 2
     # candidates:
@@ -272,6 +292,13 @@ train:
     retrain_on_critical: true
     retrain_on_failure: true
     discard_on_critical: false
+  feedback:
+    max_replans: 1
+    high_pass_rate: 0.95
+    difficulty_step: 0.1
+    max_difficulty_shift: 0.2
+    reward_hacking_weight_multiplier: 1.5
+    max_reward_multiplier: 3.0
   debug_agent:
     enabled: false
     prompt: train_debug
@@ -306,10 +333,28 @@ validate:
   mode: auto                   # auto | benchmark | metrics
   metric: mean_score
   min_delta: 0.0
+  target_min_delta: 0.0
+  max_other_regression: 0.01
   allow_regression: false
   force_benchmark: false
   benchmark:
     names: []                  # empty => reuse collect.benchmark.names
+
+# Optional OPD command adapter. Its entry point receives the previous
+# checkpoint as {model_path} and the validated teacher as {teacher_model_path}.
+# The OPD artifact is benchmark-checked against that teacher before promotion.
+opd:
+  enabled: false
+  trainer:
+    type: command
+    command: [python, path/to/opd_entrypoint.py,
+              --base-model, "{model_path}",
+              --teacher-model, "{teacher_model_path}",
+              --train-data, "{train_path}",
+              --output-dir, "{output_dir}"]
+    output_dir: "{work_dir}/checkpoint"
+    metrics_path: "{work_dir}/metrics.jsonl"
+    timeout_s: 86400
 
 # --------------------------------------------------------------------- stopping
 stop:

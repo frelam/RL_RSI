@@ -42,6 +42,10 @@ class LoopSmokeTests(unittest.TestCase):
             for index, record in enumerate(state["history"]):
                 self.assertEqual(record["round"], index)
                 self.assertIn("validation", record)
+                if index == 0:
+                    self.assertEqual(record["synthesize"]["replayed"], 0)
+                else:
+                    self.assertGreater(record["synthesize"]["replayed"], 0)
                 self.assertIsNotNone(record["validation"]["score"])
                 self.assertTrue(record["validation"]["accepted"])
                 self.assertTrue(record["stop"]["should_stop"] if index == len(state["history"]) - 1 else True)
