@@ -167,6 +167,7 @@ class CommandTrainer(TrainerBackend):
         self.poll_interval_s = self.cfg.get_float("poll_interval_s", 5.0)
         self.timeout_s = self.cfg.get_float("timeout_s", 86400.0)
         self.best_metric = str(self.cfg.get("best_metric", "val_score"))
+        self.metric_aliases = self.cfg.get_dict("metric_aliases", {})
         self.gpu_count = self.cfg.get_int("gpu_count", 0)
         self.env = self.cfg.get_dict("env", {})
         self._proc = None
@@ -216,7 +217,7 @@ class CommandTrainer(TrainerBackend):
         deadline = started + self.timeout_s if self.timeout_s > 0 else None
         try:
             while True:
-                lines, offset = _read_appended_jsonl(metrics_path, offset)
+                lines, offset = _read_appended_jsonl(metrics_path, offset, self.metric_aliases)
                 for record in lines:
                     tailed.append(record)
                     if _notify(observer, record) == "stop":
@@ -237,7 +238,7 @@ class CommandTrainer(TrainerBackend):
             log_handle.close()
             self._proc = None
         # Drain anything written between the last poll and exit.
-        lines, offset = _read_appended_jsonl(metrics_path, offset)
+        lines, offset = _read_appended_jsonl(metrics_path, offset, self.metric_aliases)
         tailed.extend(lines)
         duration = time.time() - started
         if proc.returncode not in (0, None) and status == "completed":
@@ -281,7 +282,9 @@ class SlimeTrainer(CommandTrainer):
     """Slime preset. Behavior is fully defined by the command template."""
 
 
-def _read_appended_jsonl(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
+def _read_appended_jsonl(
+    path: Path, offset: int, metric_aliases: dict[str, Any] | None = None
+) -> tuple[list[dict[str, Any]], int]:
     if not path.exists():
         return [], offset
     with path.open("rb") as fh:
@@ -305,7 +308,15 @@ def _read_appended_jsonl(path: Path, offset: int) -> tuple[list[dict[str, Any]],
         if not isinstance(raw, dict):
             continue
         metrics = raw.get("metrics") if isinstance(raw.get("metrics"), dict) else raw
-        record = {"step": raw.get("step", raw.get("global_step", len(records) + 1)), "metrics": dict(metrics)}
+        normalized = dict(metrics)
+        for canonical, aliases in (metric_aliases or {}).items():
+            aliases = [aliases] if isinstance(aliases, str) else aliases
+            if canonical not in normalized:
+                for alias in aliases:
+                    if alias in metrics:
+                        normalized[canonical] = metrics[alias]
+                        break
+        record = {"step": raw.get("step", raw.get("global_step", len(records) + 1)), "metrics": normalized}
         records.append(record)
     return records, offset + len(complete)
 

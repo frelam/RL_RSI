@@ -200,6 +200,75 @@ class SaturationMonitor(MonitorAlgorithm):
         ]
 
 
+@register("monitor", "response_length_spike")
+class ResponseLengthSpikeMonitor(MonitorAlgorithm):
+    """Flag abrupt length growth, which can indicate repetition or reward hacking."""
+
+    def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
+        super().__init__(runtime, cfg, **params)
+        self.window = max(2, self.cfg.get_int("window", 5))
+        self.growth = self.cfg.get_float("growth", 1.5)
+        self.minimum = self.cfg.get_float("minimum_length", 256.0)
+
+    def observe(self, history: list[dict[str, Any]]) -> list[Finding]:
+        values = _values(history, "response_length", self.window + 1)
+        if len(values) < self.window + 1:
+            return []
+        baseline = sum(values[:-1]) / len(values[:-1])
+        latest = values[-1]
+        if baseline <= 0 or latest < self.minimum or latest < baseline * self.growth:
+            return []
+        return [Finding(
+            "response_length_spike", "warning",
+            f"response_length rose from {baseline:.1f} to {latest:.1f}",
+            step=history[-1].get("step"), metric="response_length", value=latest,
+            suggestion={"audit_repetition": True, "add_length_guard": True},
+        )]
+
+
+@register("monitor", "training_scale")
+class TrainingScaleMonitor(MonitorAlgorithm):
+    """Recommend larger rollout/batch settings after stable, high-reward progress plateaus."""
+
+    def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
+        super().__init__(runtime, cfg, **params)
+        self.window = max(3, self.cfg.get_int("window", 8))
+        self.reward_floor = self.cfg.get_float("reward_floor", 0.7)
+        self.val_delta = self.cfg.get_float("max_val_delta", 0.005)
+        self.perplexity_ceiling = self.cfg.get_float("log_perplexity_ceiling", 1.0)
+        self.rollout_multiplier = self.cfg.get_float("rollout_multiplier", 1.5)
+        self.batch_multiplier = self.cfg.get_float("batch_multiplier", 1.5)
+
+    def observe(self, history: list[dict[str, Any]]) -> list[Finding]:
+        if len(history) < self.window:
+            return []
+        window = history[-self.window:]
+        rewards = [r for record in window if (r := _metric(record, "reward")) is not None]
+        vals = [v for record in window if (v := _metric(record, "val_score")) is not None]
+        perplexities = [p for record in window if (p := _metric(record, "log_perplexity")) is not None]
+        if len(rewards) < 2 or len(vals) < 2 or not perplexities:
+            return []
+        if min(rewards) < self.reward_floor or max(vals) - min(vals) > self.val_delta:
+            return []
+        if max(perplexities) > self.perplexity_ceiling:
+            return []
+        return [Finding(
+            "training_scale", "info",
+            "reward is strong while validation is stable and log_perplexity is low",
+            step=history[-1].get("step"), metric="reward", value=rewards[-1],
+            suggestion={"rollout_n_multiplier": self.rollout_multiplier,
+                        "batch_size_multiplier": self.batch_multiplier,
+                        "action": "increase_training_scale"},
+        )]
+
+
+def _metric(record: dict[str, Any], name: str) -> float | None:
+    value = (record.get("metrics") or {}).get(name)
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return float(value)
+    return None
+
+
 @register("monitor", "zscore")
 class ZScoreMonitor(MonitorAlgorithm):
     def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:

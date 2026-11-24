@@ -288,6 +288,13 @@ train:
         min_delta: 0.01
       - type: saturation
         threshold: 0.95
+      - type: response_length_spike
+        window: 5
+        growth: 1.5
+      - type: training_scale
+        window: 8
+        reward_floor: 0.7
+        log_perplexity_ceiling: 1.0
   supervisor:
     enabled: true
     max_retries: 1
@@ -327,6 +334,8 @@ trainer:
   #           --trainer.default_local_dir, "{output_dir}"]
   # output_dir: "{work_dir}/checkpoint"
   # metrics_path: "{work_dir}/metrics.jsonl"
+  # Map backend-specific names to canonical RSI names. Example:
+  # metric_aliases: {val_score: [validation/score, eval/reward], log_perplexity: [actor/log_perplexity]}
   # poll_interval_s: 10
   # timeout_s: 86400
   # gpu_count: 8

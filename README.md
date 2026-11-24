@@ -2,23 +2,23 @@
 
 A Self-improvment RL Loop to automatically improve a model performance via reinforcement learning.
 
-> **实现状态（v0.1）**：仓库已包含可运行的模块化骨架、默认离线 mock 栈、端到端测试。设计说明见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+> **Implementation status (v0.1)**: the repository includes a runnable modular skeleton, a deterministic offline mock stack, and end-to-end tests. See [ARCHITECTURE.md](ARCHITECTURE.md) for the system design.
 >
 > ```bash
-> # 只校验配置与插件树，不调用外部系统
+> # Validate configuration and plugins without calling external systems
 > PYTHONPATH=src python -m rsi validate --config configs/default.yaml
 >
-> # 离线跑通经典循环（3 轮左右达到目标分）
+> # Run the classical loop offline
 > PYTHONPATH=src python -m rsi run --config configs/demo_mock.yaml --run-id demo
 >
-> # 查看每轮采集分、验证分与接受/拒绝
+> # Inspect collection and validation scores and promotion decisions
 > PYTHONPATH=src python -m rsi inspect runs/demo --history
 >
-> # 全量测试
+> # Run the full test suite
 > PYTHONPATH=src python -m unittest discover -s tests -t .
 > ```
 >
-> 真实 vLLM / verl / EvalScope / agent harness 通过 adapter 接入，示例配置在 `configs/default.yaml` 的注释里。所有外部命令记录到 `runs/<id>/commands.jsonl`，checkpoint 由 `runs/<id>/checkpoints/registry.json` 统一管理。
+> Real vLLM / verl / EvalScope / agent harness integrations use adapters. Example settings are commented in `configs/default.yaml`. External commands are recorded in `runs/<id>/commands.jsonl`, and checkpoints are managed in `runs/<id>/checkpoints/registry.json`.
 
 loop for: trajectory collect(rollout or from inference) -> analyze bad case -> task synthesis(data collect\env synthesis) -> RL train -> update checkpoint ->  traj collect
 
@@ -62,17 +62,9 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
             <br /> 2. Ensure data strategy work. 
             <br /> 3. finetune Training hyper parameter.
 - Formal Run.
-- Efficient training strategy required. <br /> e.g.
-  <br /> 1. small batchsize and rollout n firstly, then increase them to reduce gradient noise\detailed reward landscape\hard problem success example
-  
-
-- Monitoring the metric(Validation\entropy\reward and so on) and take action.(Need adapter to parse log for different training backend） <br /> e.g.
-  <br />  1. If reward go up and validation not improve. Refilter the data to get harder data.
-  <br />  2. If entropy go down and validation not imporve. get harder data.
-  <br />  3. If some domain reward too higher than other domain, refilter the data of this domain.
-  <br />  4. If response length raise quickly, checkout the repeats issuse and add guard in reward.
-  <br />  5. If validation and reward improve slowly, and reward is high and log_perplexity is low, try wait for future steps or increase rollout n and batchsize.
-  <br />  And so on. Users can define and register custom observe-action rules, and can also choose which rules to load during training.
+- Use a staged training schedule. Start with conservative batch and rollout sizes to validate reward behavior and learn a useful reward landscape. Increase rollout count and batch size only when metrics indicate stable learning and additional gradient averaging is valuable. See [training strategy and monitoring theory](docs/training_strategy_monitoring.md).
+- Monitor validation, entropy, reward, gradient norms, response length, and other backend metrics through a normalized metric record. Trainer adapters can map backend-specific field names using `trainer.metric_aliases`. Rules are independently registered plugins selected through `train.monitor.algorithms`, and findings carry suggested actions for audit or retry handling. Built-in rules cover non-finite metrics, gradient spikes, entropy collapse, reward/validation divergence, validation plateaus, saturation, abrupt response-length growth, and stable high-reward plateaus where a larger training scale may be worth testing.
+- Use reward/validation divergence as evidence to audit reward and verification, then refilter toward examples the policy solves inconsistently. Falling entropy alongside flat validation can indicate premature policy concentration, but should be checked against reward, KL, and validation signals before increasing difficulty. Large response-length jumps merit repetition analysis and length-aware reward guards. Domain-level reward imbalance should be monitored with domain-tagged metrics and addressed through targeted data quotas. These are diagnostic suggestions, not universal prescriptions.
 
 - Go back to filter data step and continue training.
 - Finally get a new version of checkpoint which is good at validation score.

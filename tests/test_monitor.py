@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
+from pathlib import Path
 
 from rsi.core.config import Config
 from rsi.core.types import TrainingResult
+from rsi.adapters.trainer import _read_appended_jsonl
 from rsi.modules.train_monitor import MonitorHub, Supervisor
 from tests.helpers import REPO_ROOT, FakeRuntime
 
@@ -14,6 +17,38 @@ def cfg(data: dict) -> Config:
 
 
 class MonitorTests(unittest.TestCase):
+    def test_metric_aliases_normalize_backend_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "metrics.jsonl"
+            path.write_text(json.dumps({"global_step": 8, "metrics": {"validation/score": 0.6}}) + "\n")
+            records, offset = _read_appended_jsonl(path, 0, {"val_score": ["validation/score"]})
+            self.assertEqual(records[0]["step"], 8)
+            self.assertEqual(records[0]["metrics"]["val_score"], 0.6)
+            self.assertEqual(offset, path.stat().st_size)
+
+    def test_response_length_spike_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            hub = MonitorHub(FakeRuntime(td), cfg({"algorithms": [
+                {"type": "response_length_spike", "window": 2, "growth": 1.5, "minimum_length": 100}
+            ]}))
+            for step, length in enumerate([100, 105, 110, 300], start=1):
+                hub.observe({"step": step, "metrics": {"response_length": length}})
+            self.assertEqual(hub.snapshot()[0]["code"], "response_length_spike")
+
+    def test_training_scale_requires_stable_high_reward(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            hub = MonitorHub(FakeRuntime(td), cfg({"algorithms": [
+                {"type": "training_scale", "window": 3, "reward_floor": 0.7,
+                 "max_val_delta": 0.01, "log_perplexity_ceiling": 1.0}
+            ]}))
+            for step in range(3):
+                hub.observe({"step": step, "metrics": {
+                    "reward": 0.8, "val_score": 0.5, "log_perplexity": 0.2,
+                }})
+            finding = hub.snapshot()[0]
+            self.assertEqual(finding["code"], "training_scale")
+            self.assertEqual(finding["suggestion"]["rollout_n_multiplier"], 1.5)
+
     def test_entropy_collapse_stops_training(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             runtime = FakeRuntime(td)

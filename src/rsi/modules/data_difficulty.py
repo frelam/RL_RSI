@@ -17,11 +17,11 @@ _REASONING_MARKERS = [
     "first",
     "second",
     "finally",
-    "证明",
-    "因此",
-    "首先",
-    "然后",
-    "最后",
+    "proof",
+    "as a result",
+    "to begin with",
+    "next",
+    "to conclude",
 ]
 _NUMBERED_LINE = re.compile(r"^\s*(?:\d+[.)]|[-*])\s+", re.MULTILINE)
 
