@@ -54,17 +54,26 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 
 ## 4. use RL framework to train by model it-self.(via verl, slime, etc.)
 - Filter the data with difficulty level from data pool.
-- Efficient rollout-based data filtering keeps examples that the current policy solves inconsistently. Under independent samples, at 10% accuracy the all-wrong probability falls from 18.53% at 16 rollouts to 3.43% at 32. Expected work rises from 10.07 to 12.19 completions per candidate (+21%). The 32-rollout extension is enabled when the filter is enabled and can be turned off. See [the feature theory and configuration](docs/adaptive_rollout_filter.md).
-- With `data.mixing.preserve_ratio` enabled, select the largest dataset whose integer group quotas fit available samples, group bounds, the total cap, and the configured absolute share tolerance (`ratio_tolerance`, 0.10 by default). See [the data mixing theory and configuration](docs/data_mixing_ratio.md).
-- Start with the strict difficulty band and widen it by `relax_by` for up to `relax_max_steps` steps. Use the smallest widening that reaches the largest feasible mix, and fill quotas with strict samples first. All candidates must pass the upstream filter pipeline. If no feasible mix exists, training skips that dataset.
-- The JSONL builder may reduce the validation holdout to keep the training mix within tolerance. The dataset manifest records the target, selected, and training shares.
+  - Efficient filtering algorithm. rollout n increase 4->8->16->32 gradually, can reduce half of rollout time. Under independent samples, at 10% accuracy the all-wrong probability falls from 18.53% at 16 rollouts to 3.43% at 32. Expected work rises from 10.07 to 12.19 completions per candidate (+21%). The 32-rollout extension is enabled when the filter is enabled and can be turned off. See [the feature theory and configuration](docs/adaptive_rollout_filter.md).
+  - Preserve data mixing ratio after filtering data.
+    - With `data.mixing.preserve_ratio` enabled, select the largest dataset whose integer group quotas fit available samples, group bounds, the total cap, and the configured absolute share tolerance (`ratio_tolerance`, 0.10 by default). See [the data mixing theory and configuration](docs/data_mixing_ratio.md).
+    - Start with the strict difficulty band and widen it by `relax_by` for up to `relax_max_steps` steps. Use the smallest widening that reaches the largest feasible mix, and fill quotas with strict samples first. All candidates must pass the upstream filter pipeline. If no feasible mix exists, training skips that dataset.
+    - The JSONL builder may reduce the validation holdout to keep the training mix within tolerance. The dataset manifest records the target, selected, and training shares.
 - Smoke run.<br /> 1. Ensure reward no hacking. 
             <br /> 2. Ensure data strategy work. 
             <br /> 3. finetune Training hyper parameter.
 - Formal Run.
-- Use a staged training schedule. Start with conservative batch and rollout sizes to validate reward behavior and learn a useful reward landscape. Increase rollout count and batch size only when metrics indicate stable learning and additional gradient averaging is valuable. See [training strategy and monitoring theory](docs/training_strategy_monitoring.md).
-- Monitor validation, entropy, reward, gradient norms, response length, and other backend metrics through a normalized metric record. Trainer adapters can map backend-specific field names using `trainer.metric_aliases`. Rules are independently registered plugins selected through `train.monitor.algorithms`, and findings carry suggested actions for audit or retry handling. Built-in rules cover non-finite metrics, gradient spikes, entropy collapse, reward/validation divergence, validation plateaus, saturation, abrupt response-length growth, and stable high-reward plateaus where a larger training scale may be worth testing.
-- Use reward/validation divergence as evidence to audit reward and verification, then refilter toward examples the policy solves inconsistently. Falling entropy alongside flat validation can indicate premature policy concentration, but should be checked against reward, KL, and validation signals before increasing difficulty. Large response-length jumps merit repetition analysis and length-aware reward guards. Domain-level reward imbalance should be monitored with domain-tagged metrics and addressed through targeted data quotas. These are diagnostic suggestions, not universal prescriptions.
+- Use a staged training schedule.
+  - Start with conservative batch and rollout sizes to validate reward behavior and learn a useful reward landscape. Increase rollout count and batch size only when metrics indicate stable learning and additional gradient averaging is valuable. See [training strategy and monitoring theory](docs/training_strategy_monitoring.md).
+- Monitor metric and take action.
+  - Metric like validation, entropy, reward, gradient norms, response length, and other backend metrics through a normalized metric record.
+  - Trainer adapters can map backend-specific field names using `trainer.metric_aliases`.
+  - Rules are independently registered plugins selected through `train.monitor.algorithms`, and findings carry suggested actions for audit or retry handling. Built-in rules cover non-finite metrics, gradient spikes, entropy collapse, reward/validation divergence, validation plateaus, saturation, abrupt response-length growth, and stable high-reward plateaus where a larger training scale may be worth testing.
+  - Build-in rules:
+    - Use reward/validation divergence as evidence to audit reward and verification, then refilter toward examples the policy solves inconsistently.
+    - Falling entropy alongside flat validation can indicate premature policy concentration, but should be checked against reward, KL, and validation signals before increasing difficulty.
+    - Large response-length jumps merit repetition analysis and length-aware reward guards.
+    - Domain-level reward imbalance should be monitored with domain-tagged metrics and addressed through targeted data quotas. These are diagnostic suggestions, not universal prescriptions.
 
 - Go back to filter data step and continue training.
 - Finally get a new version of checkpoint which is good at validation score.
