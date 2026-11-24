@@ -64,6 +64,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Formal Run.
 - Efficient training strategy required. <br /> e.g.
   <br /> 1. small batchsize and rollout n firstly, then increase them to reduce gradient noise\detailed reward landscape\hard problem success example
+  
 
 - Monitoring the metric(Validation\entropy\reward and so on) and take action.(Need adapter to parse log for different training backend） <br /> e.g.
   <br />  1. If reward go up and validation not improve. Refilter the data to get harder data.
@@ -71,7 +72,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
   <br />  3. If some domain reward too higher than other domain, refilter the data of this domain.
   <br />  4. If response length raise quickly, checkout the repeats issuse and add guard in reward.
   <br />  5. If validation and reward improve slowly, and reward is high and log_perplexity is low, try wait for future steps or increase rollout n and batchsize.
-  <br />  And so on. Rule for observe-action can be register by user.
+  <br />  And so on. Users can define and register custom observe-action rules, and can also choose which rules to load during training.
 
 - Go back to filter data step and continue training.
 - Finally get a new version of checkpoint which is good at validation score.
