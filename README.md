@@ -32,6 +32,9 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - collect newest benchmark and merge into the former benchmark.
 - Collect failure traces and run benchmark to test model.(via evalscope, etc.)(pass@k\mean@k\response_length)
 - Defined a set of foundation capabilities.
+- Define a task-capabilities map. User can custom its own task.
+- Define a task-benchmark map. To cover required capabilities.
+- Define a benchmark-capabilities map. To digest which capabilities not cover
 - Summarize which capabilities are missing.(use benchmark maps or LLM judge)
 - Prioritize the missing capabilities based on their foundational nature and importance.
 - deliver missing capabilities map and their priorities.
