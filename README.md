@@ -48,6 +48,9 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
               2. from web<br />
               3. from hf or github<br />
               4. Synthetic data<br />
+- Need some data process technology
+  - Deduplication (using hashing, etc.)
+  - Prevent benchmark data leakage
 - Combine recent train.jsonl data with newly sampled data to synthesize a dataset and reduce forgetting. Validation samples are excluded from replay.
 - Deliver a new dataset and the desired mix ratio.
 - Enhance the reward associated with the data
