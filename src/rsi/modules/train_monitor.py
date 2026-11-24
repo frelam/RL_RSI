@@ -238,6 +238,9 @@ class TrainingScaleMonitor(MonitorAlgorithm):
         self.perplexity_ceiling = self.cfg.get_float("log_perplexity_ceiling", 1.0)
         self.rollout_multiplier = self.cfg.get_float("rollout_multiplier", 1.5)
         self.batch_multiplier = self.cfg.get_float("batch_multiplier", 1.5)
+        self.lr_scaling = str(self.cfg.get("lr_scaling", "sqrt")).lower()
+        if self.lr_scaling not in {"linear", "sqrt", "none"}:
+            raise ValueError("training_scale.lr_scaling must be 'linear', 'sqrt', or 'none'")
 
     def observe(self, history: list[dict[str, Any]]) -> list[Finding]:
         if len(history) < self.window:
@@ -252,13 +255,20 @@ class TrainingScaleMonitor(MonitorAlgorithm):
             return []
         if max(perplexities) > self.perplexity_ceiling:
             return []
+        suggestion = {
+            "rollout_n_multiplier": self.rollout_multiplier,
+            "batch_size_multiplier": self.batch_multiplier,
+            "action": "increase_training_scale",
+        }
+        if self.lr_scaling == "linear":
+            suggestion["learning_rate_multiplier"] = self.batch_multiplier
+        elif self.lr_scaling == "sqrt":
+            suggestion["learning_rate_multiplier"] = math.sqrt(self.batch_multiplier)
         return [Finding(
             "training_scale", "info",
             "reward is strong while validation is stable and log_perplexity is low",
             step=history[-1].get("step"), metric="reward", value=rewards[-1],
-            suggestion={"rollout_n_multiplier": self.rollout_multiplier,
-                        "batch_size_multiplier": self.batch_multiplier,
-                        "action": "increase_training_scale"},
+            suggestion=suggestion,
         )]
 
 

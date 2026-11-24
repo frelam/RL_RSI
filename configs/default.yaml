@@ -295,6 +295,7 @@ train:
         window: 8
         reward_floor: 0.7
         log_perplexity_ceiling: 1.0
+        lr_scaling: sqrt
   supervisor:
     enabled: true
     max_retries: 1

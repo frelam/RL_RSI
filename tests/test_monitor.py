@@ -48,6 +48,20 @@ class MonitorTests(unittest.TestCase):
             finding = hub.snapshot()[0]
             self.assertEqual(finding["code"], "training_scale")
             self.assertEqual(finding["suggestion"]["rollout_n_multiplier"], 1.5)
+            self.assertAlmostEqual(finding["suggestion"]["learning_rate_multiplier"], 1.5 ** 0.5)
+
+    def test_training_scale_lr_multiplier_supports_linear_scaling(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            hub = MonitorHub(FakeRuntime(td), cfg({"algorithms": [
+                {"type": "training_scale", "window": 3, "reward_floor": 0.7,
+                 "max_val_delta": 0.01, "log_perplexity_ceiling": 1.0,
+                 "batch_multiplier": 2.0, "lr_scaling": "linear"}
+            ]}))
+            for step in range(3):
+                hub.observe({"step": step, "metrics": {
+                    "reward": 0.8, "val_score": 0.5, "log_perplexity": 0.2,
+                }})
+            self.assertEqual(hub.snapshot()[0]["suggestion"]["learning_rate_multiplier"], 2.0)
 
     def test_entropy_collapse_stops_training(self) -> None:
         with tempfile.TemporaryDirectory() as td:

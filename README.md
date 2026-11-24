@@ -64,11 +64,12 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
             <br /> 3. finetune Training hyper parameter.
 - Formal Run.
 - Use a staged training schedule.
-  - Start with conservative batch and rollout sizes to validate reward behavior and learn a useful reward landscape. Increase rollout count and batch size only when metrics indicate stable learning and additional gradient averaging is valuable. See [training strategy and monitoring theory](docs/training_strategy_monitoring.md).
+  - Start with conservative batch and rollout sizes to validate reward behavior and learn a useful reward landscape. Increase scale only when metrics indicate stable learning and additional gradient averaging is valuable. See [training strategy](docs/training_strategy.md).
+  - When increasing batch size, the `training_scale` monitor can suggest a learning-rate increase using linear or square-root scaling. Configure `lr_scaling` and review the assumptions in [batch-size and learning-rate scaling](docs/training_strategy.md#learning-rate-scaling-with-batch-size).
 - Monitor metric and take action.
   - Metric like validation, entropy, reward, gradient norms, response length, and other backend metrics through a normalized metric record.
   - Trainer adapters can map backend-specific field names using `trainer.metric_aliases`.
-  - Rules are independently registered plugins selected through `train.monitor.algorithms`, and findings carry suggested actions for audit or retry handling. Built-in rules cover non-finite metrics, gradient spikes, entropy collapse, reward/validation divergence, validation plateaus, saturation, abrupt response-length growth, and stable high-reward plateaus where a larger training scale may be worth testing.
+  - Rules are independently registered plugins selected through `train.monitor.algorithms`, and findings carry suggested actions for audit or retry handling. Built-in rules cover non-finite metrics, gradient spikes, entropy collapse, reward/validation divergence, validation plateaus, saturation, abrupt response-length growth, and stable high-reward plateaus where a larger training scale may be worth testing. See [metric-driven monitoring](docs/training_monitoring.md).
   - Build-in rules:
     - Use reward/validation divergence as evidence to audit reward and verification, then refilter toward examples the policy solves inconsistently.
     - Falling entropy alongside flat validation can indicate premature policy concentration, but should be checked against reward, KL, and validation signals before increasing difficulty.
