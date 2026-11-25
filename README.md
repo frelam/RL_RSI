@@ -81,6 +81,11 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
     - Falling entropy alongside flat validation can indicate premature policy concentration, but should be checked against reward, KL, and validation signals before increasing difficulty.
     - Large response-length jumps merit repetition analysis and length-aware reward guards.
     - Domain-level reward imbalance should be monitored with domain-tagged metrics and addressed through targeted data quotas. These are diagnostic suggestions, not universal prescriptions.
+- Use RL scaling law to predict max performance and the required step
+  - Refer to https://natolambert.com/slides/2026/cornell-post-training/talk#33
+  - When the second derivative of the performance improvement suddenly decreases, it indicates that the point is near the midpoint. Therefore, the final accuracy can be determined based on the current performance and the initial values.
+  - After the midpoint, a sampling point can be selected to determine the exponential parameters; by combining these with the previously calculated parameters, the complete scaling prediction formula can be derived.
+  - Furthermore, it is possible to predict that employing multiple steps will achieve the desired performance.
 
 - Go back to filter data step and continue training.
 - Finally get a new version of checkpoint which is good at validation score.
