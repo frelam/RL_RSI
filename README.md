@@ -58,16 +58,18 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Deliver a new dataset and the desired mix ratio.
 - Enhance the reward associated with the data
 
-## 4. use RL framework to train by model it-self.(via verl, slime, etc.)
+## 3. use RL framework to train by model it-self.(via verl, slime, etc.)
 - Filter the data with difficulty level from data pool.
   - Efficient filtering algorithm. rollout n increase 4->8->16->32 gradually, can reduce half of rollout time. Under independent samples, at 10% accuracy the all-wrong probability falls from 18.53% at 16 rollouts to 3.43% at 32. Expected work rises from 10.07 to 12.19 completions per candidate (+21%). The 32-rollout extension is enabled when the filter is enabled and can be turned off. See [the feature theory and configuration](docs/adaptive_rollout_filter.md).
   - Preserve data mixing ratio after filtering data.
     - With `data.mixing.preserve_ratio` enabled, select the largest dataset whose integer group quotas fit available samples, group bounds, the total cap, and the configured absolute share tolerance (`ratio_tolerance`, 0.10 by default). See [the data mixing theory and configuration](docs/data_mixing_ratio.md).
     - Start with the strict difficulty band and widen it by `relax_by` for up to `relax_max_steps` steps. Use the smallest widening that reaches the largest feasible mix, and fill quotas with strict samples first. All candidates must pass the upstream filter pipeline. If no feasible mix exists, training skips that dataset.
     - The JSONL builder may reduce the validation holdout to keep the training mix within tolerance. The dataset manifest records the target, selected, and training shares.
-- Smoke run.<br /> 1. Ensure reward no hacking. 
-            <br /> 2. Ensure data strategy work. 
-            <br /> 3. finetune Training hyper parameter.
+- Maybe Smoke run( use small batchsize and few steps).
+  - 1. Ensure reward no hacking. 
+  - 2. Ensure data strategy work. 
+  - 3. finetune Training hyper parameter( lr, infra-pramas).
+  - 4. Maybe slightly change the data mixing ratio. 
 - Formal Run.
 - Use a staged training schedule.
   - Start with conservative batch and rollout sizes to validate reward behavior and learn a useful reward landscape. Increase scale only when metrics indicate stable learning and additional gradient averaging is valuable. See [training strategy](docs/training_strategy.md).
@@ -88,10 +90,11 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
   - Furthermore, it is possible to predict that employing multiple steps will achieve the desired performance.
 
 - Go back to filter data step and continue training.
+- If run out of data, jump out the Loop. ( more than 2 epoch, to avoid overfit)
 - Finally get a new version of checkpoint which is good at validation score.
 
 
-## 5. Check new checkpoint
+## 4. Check new checkpoint
 - run benchmark check if desired domain has been improved.
 - if ok, run OPD to merge new domain abilities to previous checkpoint.
 - if not ok, return to step 2
