@@ -1,0 +1,33 @@
+# One-round, five-step offline run for checking the RSI orchestration path.
+# This uses mocks and does not validate a real model or trainer backend.
+include: [default.yaml]
+
+run:
+  id: smoke-mock
+
+collect:
+  rollout:
+    limit: 2
+    samples_per_prompt: 1
+
+data:
+  max_generated: 32
+  replay:
+    enabled: false
+  plan:
+    count_per_defect: 2
+    min_count: 1
+    max_count: 2
+    max_requests: 2
+  collectors:
+    text:
+      max_calls: 1
+
+trainer:
+  steps: 5
+  eval_every: 1
+
+stop:
+  policies:
+    - type: max_rounds
+      max_rounds: 1

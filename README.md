@@ -65,11 +65,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
     - With `data.mixing.preserve_ratio` enabled, select the largest dataset whose integer group quotas fit available samples, group bounds, the total cap, and the configured absolute share tolerance (`ratio_tolerance`, 0.10 by default). See [the data mixing theory and configuration](docs/data_mixing_ratio.md).
     - Start with the strict difficulty band and widen it by `relax_by` for up to `relax_max_steps` steps. Use the smallest widening that reaches the largest feasible mix, and fill quotas with strict samples first. All candidates must pass the upstream filter pipeline. If no feasible mix exists, training skips that dataset.
     - The JSONL builder may reduce the validation holdout to keep the training mix within tolerance. The dataset manifest records the target, selected, and training shares.
-- Maybe Smoke run( use small batchsize and few steps).
-  - 1. Ensure reward no hacking. 
-  - 2. Ensure data strategy work. 
-  - 3. finetune Training hyper parameter( lr, infra-pramas).
-  - 4. Maybe slightly change the data mixing ratio. 
+- Run a short smoke check before a formal run. The offline mock example is in [the smoke-run guide](docs/smoke_run.md). For a real trainer, validate the config and run only a few optimizer steps to check reward examples, data selection, metric health, and basic infrastructure. Change one setting at a time; use the observed training mix before deciding whether to adjust its target ratio.
 - Formal Run.
 - Use a staged training schedule.
   - Start with conservative batch and rollout sizes to validate reward behavior and learn a useful reward landscape. Increase scale only when metrics indicate stable learning and additional gradient averaging is valuable. See [training strategy](docs/training_strategy.md).
