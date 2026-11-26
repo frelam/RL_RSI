@@ -7,7 +7,7 @@ from typing import Any
 
 from rsi.core.errors import ConfigError
 from rsi.core.jsonio import atomic_write_json, read_jsonl, stable_hash
-from rsi.core.types import ChatMessage, Checkpoint, DataPlan, DataSample, DatasetArtifact, DefectReport
+from rsi.core.types import ChatMessage, Checkpoint, DataPlan, DataSample, DatasetArtifact, DefectReport, TaskSpec
 from rsi.modules.data_builder import JsonlDatasetBuilder  # noqa: F401 - registers plugin
 from rsi.modules.data_collectors import (  # noqa: F401 - registers plugins
     AgenticSynthesisCollector,
@@ -124,6 +124,31 @@ class DataPipeline:
         prompt_id = getattr(self.grader, "prompt_id", None)
         if prompt_id:
             self.runtime.prompt_hub.get(str(prompt_id))
+
+    def plan_task(self, task: TaskSpec, round_no: int = 0) -> DataPlan:
+        """Expose task-to-dataset planning without starting a training run."""
+        return self.planner.plan_task(task, type("TaskContext", (), {"round": round_no})())
+
+    def collect_task(self, task: TaskSpec, round_no: int = 0) -> list[DataSample]:
+        """Collect task-targeted rows from the configured dataset library."""
+        plan = self.plan_task(task, round_no)
+        collector = self.collectors.get("dataset")
+        if collector is None:
+            raise ConfigError("collect_task requires a data collector with kind 'dataset'")
+        context = DataContext(
+            round=round_no,
+            runtime=self.runtime,
+            state=None,
+            collect_result=None,
+            defects=None,
+            work_dir=self.runtime.artifacts.stage_dir(round_no, "task-data"),
+            plan=plan,
+            rng=self.runtime.rng("task-data", task.id, round_no),
+        )
+        samples: list[DataSample] = []
+        for request in plan.requests:
+            samples.extend(collector.collect(request, context)[:request.count])
+        return samples[:task.count]
 
     def run(
         self,

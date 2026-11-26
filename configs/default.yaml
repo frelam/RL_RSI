@@ -114,6 +114,12 @@ analyze:
       top_n: 6
       max_score: 0.75
       min_confidence: 0.2
+    # Enable when collected rollout trajectories contain task context worth auditing.
+    # - type: trajectory_agent
+    #   name: trajectory_agent
+    #   prompt: trajectory_ability_analysis
+    #   profile: judge
+    #   max_trajectories: 12
     # Optional agentic deep-dive (advisory, schema-gated):
     # - type: harness
     #   name: harness
@@ -179,6 +185,10 @@ data:
       skills: [env-synthesis]
       max_tasks: 4
       timeout_s: 900
+    dataset:
+      type: dataset_library
+      catalog: configs/datasets.yaml
+      max_datasets: 4
     rollout:
       type: rollout_reuse
       only_success: true

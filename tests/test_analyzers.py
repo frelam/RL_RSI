@@ -8,6 +8,7 @@ from rsi.core.types import BenchmarkReport, CollectResult, ItemResult
 from rsi.modules.analyze_llm import LLMJudgeAnalyzer
 from rsi.modules.analyze_merge import DefectMerger
 from rsi.modules.analyze_rule import RuleCapabilityAnalyzer
+from rsi.modules.analyze_trajectory import TrajectoryAbilityAnalyzer
 from rsi.modules.metrics import capability_table, overall_metrics
 from tests.helpers import REPO_ROOT, FakeRuntime
 
@@ -61,6 +62,23 @@ def build_collect(runtime: FakeRuntime, td: str) -> CollectResult:
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_trajectory_analyzer_returns_catalog_limited_ability_priorities(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            runtime = FakeRuntime(td)
+            collect = build_collect(runtime, td)
+            collect.trajectories = [
+                __import__("rsi.core.types", fromlist=["Trajectory"]).Trajectory(
+                    id="t1", prompt="debug this code", messages=[], final_answer="failed", reward=0.0
+                )
+            ]
+            report = TrajectoryAbilityAnalyzer(
+                runtime, cfg({"prompt": "trajectory_ability_analysis", "profile": "judge"})
+            ).analyze(collect, 0, {})
+            self.assertEqual(report.sources, ["trajectory_agent"])
+            self.assertTrue(set(report.metadata["ability_priorities"]).issubset(
+                {item["name"] for item in runtime.catalog.all()}
+            ))
+
     def test_rule_analyzer_finds_low_capabilities_and_maps_general_items(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             runtime = FakeRuntime(td)

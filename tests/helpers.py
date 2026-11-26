@@ -45,6 +45,9 @@ _LLM_FIXTURES = {
             }
         ]
     },
+    "trajectory_ability_analysis": {
+        "ability_priorities": {"code.debugging": 0.8, "unknown.ability": 0.9}
+    },
 }
 
 _HARNESS_FIXTURES = {

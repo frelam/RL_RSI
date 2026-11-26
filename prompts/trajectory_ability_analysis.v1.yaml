@@ -1,0 +1,27 @@
+id: trajectory_ability_analysis
+version: 1
+description: Estimate task-required abilities and their priorities from collected trajectories.
+variables: [capabilities, trajectories]
+system: |
+  Analyze the task demands evidenced by the supplied trajectories. Return only
+  abilities from the supplied catalog. Give each priority in [0, 1], where a
+  higher value means more training data should target that ability. Do not
+  infer user identity or private context.
+template: |
+  Capability catalog:
+  {{capabilities}}
+
+  Trajectories:
+  {{trajectories}}
+
+  Return an ability_priorities mapping from capability name to priority.
+schema:
+  type: object
+  required: [ability_priorities]
+  properties:
+    ability_priorities:
+      type: object
+      additionalProperties:
+        type: number
+        minimum: 0
+        maximum: 1

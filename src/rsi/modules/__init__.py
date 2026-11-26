@@ -4,6 +4,7 @@ from rsi.modules import (  # noqa: F401
     analyze_llm,
     analyze_merge,
     analyze_rule,
+    analyze_trajectory,
     collect,
     data_builder,
     data_collectors,
@@ -13,6 +14,7 @@ from rsi.modules import (  # noqa: F401
     data_mixing,
     data_pipeline,
     data_plan,
+    datasets,
     metrics,
     train_monitor,
 )

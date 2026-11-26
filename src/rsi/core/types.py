@@ -120,6 +120,9 @@ class BenchmarkReport:
     artifact: str = ""
     started_at: str = ""
     finished_at: str = ""
+    url: str = ""
+    description: str = ""
+    capability_coverage: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -189,6 +192,14 @@ class DataRequest:
     prompt_id: str = ""
     reward_hint: dict[str, Any] = field(default_factory=dict)
     defect_id: str = ""
+    notes: str = ""
+
+
+@dataclass
+class TaskSpec:
+    id: str
+    ability_priorities: dict[str, float]
+    count: int = 32
     notes: str = ""
 
 

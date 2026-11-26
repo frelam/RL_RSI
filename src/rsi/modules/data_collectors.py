@@ -17,6 +17,7 @@ from rsi.core.types import (
     HarnessTask,
     LLMRequest,
 )
+from rsi.modules.datasets import DatasetCatalog, fetch_dataset_rows, rows_to_samples
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 
@@ -413,6 +414,59 @@ class KnowledgeIngestCollector(DataCollector):
                 if len(chunks) >= self.max_chunks:
                     return chunks
         return chunks
+
+
+@register("data_collector", "dataset_library")
+class DatasetLibraryCollector(DataCollector):
+    """Load curated external datasets that cover the requested capability."""
+
+    kind = "dataset"
+
+    def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
+        super().__init__(runtime, cfg, **params)
+        catalog_path = runtime.path(self.cfg.get("catalog", "configs/datasets.yaml"))
+        self.catalog = DatasetCatalog(catalog_path, runtime.repo_root)
+        self.max_datasets = max(1, self.cfg.get_int("max_datasets", 4))
+
+    def collect(self, request: DataRequest, context: Any) -> list[DataSample]:
+        priority = self.runtime.catalog.priority(request.capability)
+        selection = self.catalog.select({request.capability: priority}, self.max_datasets)
+        if not selection.datasets:
+            self.logger.info("no dataset catalog entries cover %s", request.capability)
+            return []
+        quotas = _dataset_quotas(selection.ratios, request.count)
+        samples: list[DataSample] = []
+        source_stats: dict[str, int] = {}
+        for dataset in selection.datasets:
+            try:
+                rows = fetch_dataset_rows(dataset, self.runtime.repo_root)
+                selected = rows_to_samples(dataset, rows, request, quotas.get(dataset.name, 0))
+            except Exception as exc:  # noqa: BLE001 - other sources may still serve the request
+                self.logger.warning("dataset %s failed: %s", dataset.name, exc)
+                continue
+            source_stats[dataset.name] = len(selected)
+            samples.extend(selected)
+        samples.sort(key=lambda sample: (sample.metadata.get("dataset", ""), sample.id))
+        samples = samples[: request.count]
+        for sample in samples:
+            sample.metadata["dataset_selection"] = {
+                "ratios": selection.ratios,
+                "uncovered": selection.uncovered,
+                "source_counts": source_stats,
+            }
+        return samples
+
+
+def _dataset_quotas(ratios: dict[str, float], total: int) -> dict[str, int]:
+    if not ratios or total <= 0:
+        return {}
+    exact = {name: ratio * total for name, ratio in ratios.items()}
+    quotas = {name: int(value) for name, value in exact.items()}
+    remainder = total - sum(quotas.values())
+    order = sorted(ratios, key=lambda name: (exact[name] - quotas[name], name), reverse=True)
+    for name in order[:remainder]:
+        quotas[name] += 1
+    return quotas
 
 
 def _chunk_text(text: str, size: int, overlap: int) -> list[str]:

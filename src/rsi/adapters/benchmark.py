@@ -146,6 +146,8 @@ class JsonlBenchmark(BenchmarkBackend):
         self.pass_threshold = self.cfg.get_float("pass_threshold", 0.5)
         self.primary_metric = str(self.cfg.get("primary_metric", "mean_score"))
         self.store_responses = self.cfg.get_bool("store_responses", False)
+        self.url = str(self.cfg.get("url", ""))
+        self.description = str(self.cfg.get("description", ""))
 
     def _load_items(self) -> list[BenchmarkItem]:
         rows = read_jsonl(self.path)
@@ -234,6 +236,9 @@ class JsonlBenchmark(BenchmarkBackend):
             primary_metric=self.primary_metric,
             started_at=started,
             finished_at=now_iso(),
+            url=self.url,
+            description=self.description,
+            capability_coverage=sorted({item.capability for item in items}),
             metadata={"path": str(self.path)},
         )
 
@@ -259,6 +264,8 @@ class EvalScopeBenchmark(BenchmarkBackend):
         self.pass_threshold = self.cfg.get_float("pass_threshold", 0.5)
         self.primary_metric = str(self.cfg.get("primary_metric", "mean_score"))
         self.env = self.cfg.get_dict("env", {})
+        self.url = str(self.cfg.get("url", ""))
+        self.description = str(self.cfg.get("description", ""))
 
     def evaluate(self, checkpoint: Checkpoint, round_no: int) -> BenchmarkReport:
         endpoint = self.runtime.inference().ensure(checkpoint)
@@ -320,6 +327,9 @@ class EvalScopeBenchmark(BenchmarkBackend):
             primary_metric=self.primary_metric,
             started_at=now_iso(),
             finished_at=now_iso(),
+            url=self.url,
+            description=self.description,
+            capability_coverage=sorted({item.capability for item in items}),
             metadata={"results_path": str(output_path)},
         )
 

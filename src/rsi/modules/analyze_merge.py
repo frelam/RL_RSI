@@ -22,6 +22,8 @@ class DefectMerger:
         self.min_severity = cfg.get_float("min_severity", 0.05)
         self.min_confidence = cfg.get_float("min_confidence", 0.2)
         self.max_defects = cfg.get_int("max_defects", 32)
+        self.rule_profile_weight = cfg.get_float("rule_profile_weight", 0.6)
+        self.agent_profile_weight = cfg.get_float("agent_profile_weight", 0.4)
 
     def merge(
         self,
@@ -74,6 +76,27 @@ class DefectMerger:
         merged.sort(key=lambda defect: (defect.severity, defect.confidence), reverse=True)
         merged = merged[: self.max_defects]
         sources = sorted({source for report in reports for source in report.sources})
+        profile_values: dict[str, list[tuple[float, float]]] = {}
+        for report in reports:
+            profile = report.metadata.get("ability_priorities") or {}
+            if not isinstance(profile, dict):
+                continue
+            source_weight = (
+                self.rule_profile_weight if "rule" in report.sources
+                else self.agent_profile_weight if "trajectory_agent" in report.sources
+                else self.default_weight
+            )
+            for capability, raw_priority in profile.items():
+                try:
+                    priority = max(0.0, min(1.0, float(raw_priority)))
+                except (TypeError, ValueError):
+                    continue
+                profile_values.setdefault(str(capability), []).append((priority, source_weight))
+        ability_priorities = {
+            capability: sum(value * weight for value, weight in values) / sum(weight for _, weight in values)
+            for capability, values in profile_values.items()
+            if sum(weight for _, weight in values) > 0
+        }
         summary = (
             f"merged {len(merged)} defect(s) across {len({d.capability for d in merged})} "
             f"capability(ies) from {', '.join(sources) or 'no source'}"
@@ -90,5 +113,6 @@ class DefectMerger:
                 "per_source": {
                     source: sum(1 for report in reports if source in report.sources) for source in sources
                 },
+                "ability_priorities": ability_priorities,
             },
         )

@@ -39,6 +39,8 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Prioritize the missing capabilities based on their foundational nature and importance.
 - deliver missing capabilities map and their priorities.
 
+The shared capability catalog in `configs/capabilities.yaml` defines ability names, priorities, reward/verifier settings, and benchmark mappings. Benchmark adapters may also declare a URL and description. Reports include the capabilities observed in their evaluated items. The optional `trajectory_agent` analyzer estimates task ability priorities from collected traces. The analysis merger combines rule and trajectory estimates using configurable source weights.
+
 ## 2. Determine a new data strategy to fix the model
 - Need some smart algorithm to produce data strategy. 
   e.g.:<br />
@@ -57,6 +59,8 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Combine recent train.jsonl data with newly sampled data to synthesize a dataset and reduce forgetting. Validation samples are excluded from replay.
 - Deliver a new dataset and the desired mix ratio.
 - Enhance the reward associated with the data
+
+Datasets are described in `configs/datasets.yaml` with a source URL or local path, loader, license, ability coverage, source priority, reward metadata, and preprocessing methods. The `dataset_library` collector supports local JSONL, HTTP JSON/JSONL, optional Hugging Face `datasets`, and inline synthetic rows. A greedy weighted-coverage selector chooses sources and derives per-source sample ratios. `DataPipeline.plan_task(TaskSpec(...))` previews a task collection plan, while `collect_task(...)` loads its samples through the same adapters. Dataset samples then use the existing filtering, deduplication, difficulty, mixing, and builder stages.
 
 ## 3. use RL framework to train by model it-self.(via verl, slime, etc.)
 - Filter the data with difficulty level from data pool.

@@ -118,7 +118,14 @@ class RuleCapabilityAnalyzer(AnalyzerBackend):
             capabilities=capabilities,
             summary=summary,
             sources=["rule"],
-            metadata={"baseline_mode": self.baseline_mode, "threshold": threshold},
+            metadata={
+                "baseline_mode": self.baseline_mode,
+                "threshold": threshold,
+                "ability_priorities": {
+                    defect.capability: min(1.0, self.runtime.catalog.priority(defect.capability) * defect.severity)
+                    for defect in defects
+                },
+            },
         )
 
     def _threshold(self, overall: float) -> float:

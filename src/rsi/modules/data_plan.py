@@ -5,7 +5,7 @@ from typing import Any
 from rsi.core.interfaces import Component
 from rsi.core.jsonio import stable_hash
 from rsi.core.schema import validate_json
-from rsi.core.types import DataPlan, DataRequest, Defect, DefectReport
+from rsi.core.types import DataPlan, DataRequest, Defect, DefectReport, TaskSpec
 
 
 class DataPlanner(Component):
@@ -63,6 +63,48 @@ class DataPlanner(Component):
         plan.metadata["curriculum"] = curriculum.notes
         plan.metadata["curriculum_stage"] = curriculum.stage
         plan.metadata["curriculum_excluded"] = curriculum.excluded
+        return plan
+
+    def plan_task(self, task: TaskSpec, context: Any) -> DataPlan:
+        """Create dataset-backed requests from an explicit task ability profile."""
+        if task.count < 0:
+            raise ValueError("task count must be non-negative")
+        defects: list[Defect] = []
+        for capability, priority in task.ability_priorities.items():
+            priority = float(priority)
+            if not 0 <= priority <= 1:
+                raise ValueError(f"task priority for {capability!r} must be in [0, 1]")
+            info = self.runtime.catalog.get(capability)
+            defects.append(
+                Defect(
+                    id=stable_hash("task", task.id, capability),
+                    capability=capability,
+                    description=task.notes or f"Task {task.id} requires {capability}",
+                    severity=priority,
+                    confidence=1.0,
+                    source="task",
+                    suggested_data={"kind": "dataset", "seeds": info.get("seeds", [])},
+                    round=context.round,
+                )
+            )
+        report = DefectReport(
+            round=context.round,
+            checkpoint_id="task",
+            defects=defects,
+            sources=["task"],
+            metadata={"ability_priorities": dict(task.ability_priorities)},
+        )
+        plan = self._rule_plan(defects[: self.max_requests], context)
+        if task.count and plan.total_target > task.count:
+            remaining = task.count
+            for request in plan.requests:
+                request.count = min(request.count, remaining)
+                remaining -= request.count
+            plan.requests = [request for request in plan.requests if request.count > 0]
+            plan.total_target = sum(request.count for request in plan.requests)
+        plan.strategy = "task_requirements"
+        plan.notes = f"{len(plan.requests)} dataset requests for task {task.id}"
+        plan.metadata["ability_priorities"] = dict(task.ability_priorities)
         return plan
 
     def _rule_plan(self, defects: list[Defect], context: Any) -> DataPlan:

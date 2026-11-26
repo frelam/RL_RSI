@@ -1,0 +1,21 @@
+# Curated dataset sources. Remote sources should be pinned and license-reviewed.
+datasets:
+  demo_math:
+    loader: synthetic
+    priority: 0.8
+    abilities: {math.reasoning: 1.0}
+    reward: {type: rule, name: numeric, weight: 1.0}
+    license: synthetic
+    preprocess: [normalize_chat, drop_empty, deduplicate]
+    rows:
+      - {id: math-1, question: "What is 6 times 7?", answer: "42", reference: "42", capability: math.reasoning}
+      - {id: math-2, question: "What is 9 times 8?", answer: "72", reference: "72", capability: math.reasoning}
+  demo_code:
+    loader: synthetic
+    priority: 0.7
+    abilities: {code.debugging: 1.0}
+    reward: {type: rule, name: contains, weight: 1.0}
+    license: synthetic
+    preprocess: [normalize_chat, drop_empty, deduplicate]
+    rows:
+      - {id: code-1, question: "Why does this loop skip the last item?", answer: "Use an inclusive end bound or iterate directly over the items.", capability: code.debugging}
