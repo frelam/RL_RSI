@@ -85,9 +85,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
     - Domain-level reward imbalance should be monitored with domain-tagged metrics and addressed through targeted data quotas. These are diagnostic suggestions, not universal prescriptions.
 - Use RL scaling law to predict max performance and the required step
   - Refer to https://natolambert.com/slides/2026/cornell-post-training/talk#33
-  - When the second derivative of the performance improvement suddenly decreases, it indicates that the point is near the midpoint. Therefore, the final accuracy can be determined based on the current performance and the initial values.
-  - After the midpoint, a sampling point can be selected to determine the exponential parameters; by combining these with the previously calculated parameters, the complete scaling prediction formula can be derived.
-  - Furthermore, it is possible to predict that employing multiple steps will achieve the desired performance.
+  - The opt-in `scaling_law` monitor fits a bounded logistic curve after validation accuracy shows a slope peak and subsequent decline. It refreshes on each metric record, tracks compute using the current batch size, mini-batch size, and rollout count, and reports remaining compute plus current-rate step equivalents for p50, p75, p90, and the asymptotic p100 ceiling. See [RL scaling projection theory and configuration](docs/rl_scaling_law.md) for assumptions and limitations.
 
 - Go back to filter data step and continue training.
 - If run out of data, jump out the Loop. ( more than 2 epoch, to avoid overfit)

@@ -63,6 +63,50 @@ class MonitorTests(unittest.TestCase):
                 }})
             self.assertEqual(hub.snapshot()[0]["suggestion"]["learning_rate_multiplier"], 2.0)
 
+    def test_scaling_law_projects_after_observed_logistic_midpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            hub = MonitorHub(FakeRuntime(td), cfg({"algorithms": [
+                {"type": "scaling_law", "max_rmse": 0.02}
+            ]}))
+            scores = [0.21, 0.27, 0.39, 0.55, 0.71, 0.83, 0.88, 0.895]
+            for step, score in enumerate(scores):
+                hub.observe({"step": step * 10, "metrics": {"val_score": score}})
+            finding = next(f for f in hub.snapshot() if f["code"] == "scaling_law_projection")
+            self.assertAlmostEqual(finding["suggestion"]["asymptotic_score"], 0.9, delta=0.03)
+            levels = finding["suggestion"]["effect_levels"]
+            self.assertGreaterEqual(levels["p50"]["remaining_compute"], 0)
+            self.assertGreaterEqual(levels["p75"]["equivalent_steps"], 0)
+            self.assertIsNone(levels["p100"]["remaining_compute"])
+            latest_metrics = hub.history[-1]["metrics"]
+            self.assertEqual(latest_metrics["scaling_law/current_compute"], 8.0)
+            self.assertEqual(latest_metrics["scaling_law/p50_equivalent_steps"],
+                             levels["p50"]["equivalent_steps"])
+
+    def test_scaling_law_recomputes_step_equivalent_after_compute_change(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            hub = MonitorHub(FakeRuntime(td), cfg({"algorithms": [
+                {"type": "scaling_law", "max_rmse": 0.02}
+            ]}))
+            scores = [0.21, 0.27, 0.39, 0.55, 0.71, 0.83, 0.88, 0.895]
+            for step, score in enumerate(scores):
+                hub.observe({"step": step, "metrics": {
+                    "val_score": score, "batch_size": 8 if step < 7 else 16,
+                    "mini_batch_size": 4, "rollout_n": 2,
+                }})
+            suggestion = next(f for f in hub.snapshot() if f["code"] == "scaling_law_projection")["suggestion"]
+            self.assertEqual(suggestion["current_step_compute"], 128.0)
+            self.assertEqual(suggestion["effect_levels"]["p50"]["equivalent_steps"],
+                             (suggestion["effect_levels"]["p50"]["remaining_compute"] + 127) // 128)
+
+    def test_scaling_law_waits_for_midpoint_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            hub = MonitorHub(FakeRuntime(td), cfg({"algorithms": [
+                {"type": "scaling_law"}
+            ]}))
+            for step in range(8):
+                hub.observe({"step": step, "metrics": {"val_score": 0.2 + step * 0.02}})
+            self.assertEqual(hub.snapshot(), [])
+
     def test_entropy_collapse_stops_training(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             runtime = FakeRuntime(td)

@@ -272,6 +272,198 @@ class TrainingScaleMonitor(MonitorAlgorithm):
         )]
 
 
+@register("monitor", "scaling_law")
+class ScalingLawMonitor(MonitorAlgorithm):
+    """Fit a bounded logistic learning curve after its slope has peaked."""
+
+    def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
+        super().__init__(runtime, cfg, **params)
+        self.enabled = self.cfg.get_bool("enabled", True)
+        self.metric = str(self.cfg.get("metric", "val_score"))
+        self.min_points = max(6, self.cfg.get_int("min_points", 7))
+        self.curvature_drop = self.cfg.get_float("curvature_drop", 0.1)
+        self.max_rmse = self.cfg.get_float("max_rmse", 0.03)
+        self.batch_metric = str(self.cfg.get("batch_metric", "batch_size"))
+        self.minibatch_metric = str(self.cfg.get("minibatch_metric", "mini_batch_size"))
+        self.rollout_metric = str(self.cfg.get("rollout_metric", "rollout_n"))
+
+        if not 0.0 <= self.curvature_drop < 1.0:
+            raise ValueError("scaling_law.curvature_drop must be in [0, 1)")
+        if self.max_rmse <= 0:
+            raise ValueError("scaling_law.max_rmse must be positive")
+
+    def observe(self, history: list[dict[str, Any]]) -> list[Finding]:
+        if not self.enabled:
+            return []
+        points, current_step_compute = _compute_metric_points(
+            history, self.metric, self.batch_metric, self.minibatch_metric, self.rollout_metric
+        )
+        if len(points) < self.min_points or not _has_observed_midpoint(points, self.curvature_drop):
+            return []
+        fit = _fit_logistic(points)
+        if fit is None:
+            return []
+        ceiling, rate, intercept, rmse = fit
+        if rmse > self.max_rmse:
+            return []
+
+        start_score = points[0][1]
+        latest_compute = points[-1][0]
+        effect_levels = {}
+        for label, fraction in (("p50", 0.50), ("p75", 0.75), ("p90", 0.90), ("p100", 1.00)):
+            target_compute = _logistic_target_compute(
+                fraction, start_score, ceiling, rate, intercept
+            )
+            remaining_compute = (
+                max(0.0, target_compute - latest_compute)
+                if target_compute is not None else None
+            )
+            effect_levels[label] = {
+                "score": start_score + fraction * (ceiling - start_score),
+                "remaining_compute": remaining_compute,
+                "equivalent_steps": (
+                    math.ceil(remaining_compute / current_step_compute)
+                    if remaining_compute is not None and current_step_compute > 0 else None
+                ),
+            }
+        suggestion = {
+            "asymptotic_score": ceiling,
+            "current_score": points[-1][1],
+            "current_compute": latest_compute,
+            "current_step_compute": current_step_compute,
+            "effect_levels": effect_levels,
+            "fit_rmse": rmse,
+            "action": "review_scaling_projection",
+        }
+        metrics = history[-1].setdefault("metrics", {})
+        metrics.update({
+            "scaling_law/current_score": suggestion["current_score"],
+            "scaling_law/asymptotic_score": suggestion["asymptotic_score"],
+            "scaling_law/current_compute": suggestion["current_compute"],
+            "scaling_law/current_step_compute": suggestion["current_step_compute"],
+            "scaling_law/fit_rmse": suggestion["fit_rmse"],
+        })
+        for label, level in effect_levels.items():
+            metrics[f"scaling_law/{label}_score"] = level["score"]
+            metrics[f"scaling_law/{label}_remaining_compute"] = level["remaining_compute"]
+            metrics[f"scaling_law/{label}_equivalent_steps"] = level["equivalent_steps"]
+        raw_step = history[-1].get("step", history[-1].get("global_step"))
+        finding_step = int(raw_step) if isinstance(raw_step, (int, float)) and not isinstance(raw_step, bool) else None
+        return [Finding(
+            "scaling_law_projection", "info",
+            f"{self.metric} logistic projection: ceiling≈{ceiling:.3f}, "
+            + f"p50/p75/p90 compute remaining≈{effect_levels['p50']['remaining_compute']:.1f}/"
+            f"{effect_levels['p75']['remaining_compute']:.1f}/"
+            f"{effect_levels['p90']['remaining_compute']:.1f}",
+            step=finding_step, metric=self.metric, value=points[-1][1],
+            suggestion=suggestion,
+        )]
+
+
+def _record_number(record: dict[str, Any], name: str, default: float) -> float:
+    value = (record.get("metrics") or {}).get(name, record.get(name, default))
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return float(value)
+    return default
+
+
+def _compute_metric_points(
+    history: list[dict[str, Any]], metric: str, batch_metric: str,
+    minibatch_metric: str, rollout_metric: str,
+) -> tuple[list[tuple[float, float]], float]:
+    points: list[tuple[float, float]] = []
+    cumulative_compute = 0.0
+    current_step_compute = 1.0
+    for record in history:
+        batch = max(1.0, _record_number(record, batch_metric, 1.0))
+        minibatch = max(1.0, _record_number(record, minibatch_metric, batch))
+        rollout_n = max(1.0, _record_number(record, rollout_metric, 1.0))
+        current_step_compute = batch * rollout_n * max(1.0, batch / minibatch)
+        cumulative_compute += current_step_compute
+        value = (record.get("metrics") or {}).get(metric)
+        if (
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value)
+            and 0 <= value <= 1
+        ):
+            points.append((cumulative_compute, float(value)))
+    return points, current_step_compute
+
+
+def _has_observed_midpoint(points: list[tuple[float, float]], drop: float) -> bool:
+    slopes = [
+        (right_y - left_y) / (right_x - left_x)
+        for (left_x, left_y), (right_x, right_y) in zip(points, points[1:])
+    ]
+    if len(slopes) < 4 or max(slopes[:-1]) <= 0:
+        return False
+    peak_index = max(range(len(slopes) - 1), key=slopes.__getitem__)
+    return peak_index > 0 and slopes[-1] <= slopes[peak_index] * (1.0 - drop)
+
+
+def _fit_logistic(points: list[tuple[float, float]]) -> tuple[float, float, float, float] | None:
+    """Search the bounded score ceiling and solve the linearized logistic fit."""
+    start_score = points[0][1]
+    observed_max = max(value for _, value in points)
+    if observed_max <= start_score or observed_max >= 1.0:
+        return None
+    span = observed_max - start_score
+    candidates = [observed_max + (1.0 - observed_max) * index / 512 for index in range(1, 513)]
+    candidates.extend(
+        min(1.0, observed_max + span * factor)
+        for factor in (0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2)
+    )
+    best: tuple[float, float, float, float] | None = None
+    best_sse = math.inf
+    fit_points = points[1:]
+    if len(fit_points) < 3:
+        return None
+    x_mean = sum(step for step, _ in fit_points) / len(fit_points)
+    x_variance = sum((step - x_mean) ** 2 for step, _ in fit_points)
+    if x_variance == 0:
+        return None
+
+    for ceiling in candidates:
+        logits: list[float] = []
+        valid = True
+        for _, value in fit_points:
+            fraction = (value - start_score) / (ceiling - start_score)
+            if not 0.0 < fraction < 1.0:
+                valid = False
+                break
+            logits.append(math.log(fraction / (1.0 - fraction)))
+        if not valid:
+            continue
+        y_mean = sum(logits) / len(logits)
+        rate = sum((step - x_mean) * (logit - y_mean)
+                   for (step, _), logit in zip(fit_points, logits)) / x_variance
+        if rate <= 0:
+            continue
+        intercept = y_mean - rate * x_mean
+        predictions = [
+            start_score + (ceiling - start_score) / (1.0 + math.exp(-max(-60.0, min(60.0, rate * step + intercept))))
+            for step, _ in points
+        ]
+        sse = sum((prediction - value) ** 2
+                  for prediction, (_, value) in zip(predictions, points))
+        if sse < best_sse:
+            best_sse = sse
+            best = (ceiling, rate, intercept, math.sqrt(sse / len(points)))
+    return best
+
+
+def _logistic_target_compute(
+    fraction: float, start_score: float, ceiling: float, rate: float, intercept: float
+) -> float | None:
+    if fraction >= 1.0:
+        return None
+    target = start_score + fraction * (ceiling - start_score)
+    normalized = (target - start_score) / (ceiling - start_score)
+    if normalized <= 0.0:
+        return 0.0
+    return (math.log(normalized / (1.0 - normalized)) - intercept) / rate
+
+
 def _metric(record: dict[str, Any], name: str) -> float | None:
     value = (record.get("metrics") or {}).get(name)
     if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
