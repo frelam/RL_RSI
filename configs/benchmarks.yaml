@@ -1,0 +1,539 @@
+# Benchmark registry: one entry per EvalScope benchmark, keyed by its EvalScope
+# dataset name. Source lists:
+# https://evalscope.readthedocs.io/zh-cn/latest/get_started/supported_dataset/llm.html
+# https://evalscope.readthedocs.io/zh-cn/latest/get_started/supported_dataset/agent.html
+# Each entry has
+#   title          display name
+#   categories     EvalScope task tags
+#   capabilities   capabilities from configs/capabilities.yaml that the benchmark covers
+#   subsets        optional. A subset (a `subset_list` value) covers `capabilities`
+#                  unless it is listed here; list only the subsets that differ. A key
+#                  may name several subsets separated by commas when they cover the
+#                  same capabilities (write such keys without quotes).
+# Subsets that differ from each other only in difficulty or topic but not in
+# capability are not listed.
+# The benchmark name plus subset name is the sub-capability of every capability it covers.
+# `general_*` and `data_collection` wrap user-supplied datasets: `general_*` keep
+# their fixed answer format, `data_collection` has no fixed content and starts empty.
+benchmarks:
+  aa_lcr: {title: "AA-LCR", categories: [Knowledge, LongContext, Reasoning], capabilities: [knowledge.qa, long_context.retrieval]}
+  agieval:
+    title: "AGIEval"
+    categories: [Knowledge, MCQ, Math, Reasoning]
+    capabilities: [knowledge.qa, math.reasoning, logic.reasoning, reading.comprehension]
+    subsets:
+      aqua-rat, sat-math, gaokao-mathqa, math, gaokao-mathcloze: [math.reasoning]
+      lsat-ar, logiqa-en: [logic.reasoning]
+      logiqa-zh: [logic.reasoning, chinese.understanding]
+      lsat-lr: [logic.reasoning, reading.comprehension]
+      lsat-rc, sat-en, gaokao-english: [reading.comprehension]
+      sat-en-without-passage: [knowledge.qa]
+      gaokao-chinese: [chinese.understanding]
+      gaokao-geography, gaokao-history: [chinese.understanding, knowledge.qa]
+      gaokao-biology, gaokao-chemistry, gaokao-physics: [chinese.understanding, stem.reasoning]
+      jec-qa-kd, jec-qa-ca: [chinese.understanding, knowledge.law]
+  aime24: {title: "AIME-2024", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  aime25: {title: "AIME-2025", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  aime26: {title: "AIME-2026", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  alpaca_eval: {title: "AlpacaEval2.0", categories: [Arena, InstructionFollowing], capabilities: [instruction.open_ended]}
+  amc: {title: "AMC", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  anat_em: {title: "AnatEM", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  anli: {title: "ANLI", categories: [MCQ], capabilities: [logic.reasoning]}
+  arc:
+    title: "ARC"
+    categories: [MCQ, Reasoning]
+    capabilities: [knowledge.qa, stem.reasoning]
+    subsets:
+      ARC-Easy: [knowledge.qa]
+  arc_agi_2: {title: "ARC-AGI-2", categories: [Reasoning], capabilities: [logic.reasoning]}
+  arc_indic:
+    title: "ARC-Challenge-Indic"
+    categories: [MCQ, MultiLingual, Reasoning]
+    capabilities: [knowledge.qa, stem.reasoning, multilingual.understanding]
+    subsets:
+      en: [knowledge.qa, stem.reasoning]
+  arena_hard: {title: "ArenaHard", categories: [Arena, InstructionFollowing], capabilities: [instruction.open_ended]}
+  arxivmath: {title: "ArXiv-Math", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  arxivrollbench: {title: "ArxivRollBench", categories: [Knowledge, MCQ, Reasoning], capabilities: [knowledge.qa, logic.reasoning]}
+  arxivrollbench_full: {title: "ArxivRollBench-Full", categories: [Knowledge, MCQ, Reasoning], capabilities: [knowledge.qa, logic.reasoning]}
+  banking77: {title: "BANKING77", categories: [MCQ], capabilities: [nlp.classification]}
+  bbeh:
+    title: "BBEH"
+    categories: [Reasoning]
+    capabilities: [logic.reasoning]
+    subsets:
+      multistep_arithmetic, time_arithmetic: [math.reasoning]
+      object_counting: [math.reasoning, logic.reasoning]
+      disambiguation_qa, object_properties, temporal_sequence: [commonsense.reasoning, logic.reasoning]
+      movie_recommendation: [judgement.decision, commonsense.reasoning]
+      sarc_triples: [language.pragmatics]
+      linguini: [multilingual.understanding]
+      sportqa: [knowledge.qa]
+  bbh:
+    title: "BBH"
+    categories: [Reasoning]
+    capabilities: [logic.reasoning, commonsense.reasoning]
+    subsets:
+      date_understanding, multistep_arithmetic_two, object_counting: [math.reasoning, logic.reasoning]
+      penguins_in_a_table: [reading.comprehension, logic.reasoning]
+      snarks, ruin_names: [language.pragmatics, commonsense.reasoning]
+      salient_translation_error_detection: [multilingual.translation, multilingual.understanding]
+      sports_understanding: [knowledge.qa, commonsense.reasoning]
+      movie_recommendation: [judgement.decision, commonsense.reasoning]
+  bc2gm: {title: "BC2GM", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  bc4chemd: {title: "BC4CHEMD", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  bc5cdr: {title: "BC5CDR", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  bhasha_bench_multi_ayur: {title: "BhashaBench-Multi (Ayurveda)", categories: [Knowledge, MCQ, MultiLingual], capabilities: [knowledge.multilingual]}
+  bhasha_bench_multi_finance: {title: "BhashaBench-Multi (Finance)", categories: [Knowledge, MCQ, MultiLingual], capabilities: [knowledge.multilingual]}
+  bhasha_bench_multi_krishi: {title: "BhashaBench-Multi (Krishi)", categories: [Knowledge, MCQ, MultiLingual], capabilities: [knowledge.multilingual]}
+  bhasha_bench_multi_legal: {title: "BhashaBench-Multi (Legal)", categories: [Knowledge, MCQ, MultiLingual], capabilities: [knowledge.multilingual, knowledge.law]}
+  bhashabenchv1_ayur: {title: "BhashaBench-V1 (Ayurveda)", categories: [Knowledge, MCQ, MultiLingual], capabilities: [knowledge.multilingual]}
+  bhashabenchv1_finance: {title: "BhashaBench-V1 (Finance)", categories: [Knowledge, MCQ, MultiLingual], capabilities: [knowledge.multilingual]}
+  bhashabenchv1_krishi: {title: "BhashaBench-V1 (Krishi)", categories: [Knowledge, MCQ, MultiLingual], capabilities: [knowledge.multilingual]}
+  bhashabenchv1_legal: {title: "BhashaBench-V1 (Legal)", categories: [Knowledge, MCQ, MultiLingual], capabilities: [knowledge.multilingual, knowledge.law]}
+  bigcodebench: {title: "BigCodeBench", categories: [Coding], capabilities: [code.practical]}
+  bigcodebench_hard: {title: "BigCodeBench-Hard", categories: [Coding], capabilities: [code.practical]}
+  biomix_qa: {title: "BioMixQA", categories: [Knowledge, MCQ, Medical], capabilities: [knowledge.medical]}
+  bird_sql: {title: "BIRD-SQL Mini-Dev", categories: [Coding, Reasoning], capabilities: [code.sql, logic.reasoning]}
+  boolq: {title: "BoolQ", categories: [MCQ], capabilities: [reading.comprehension]}
+  broad_twitter_corpus: {title: "BroadTwitterCorpus", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  ceval:
+    title: "C-Eval"
+    categories: [Chinese, Knowledge, MCQ]
+    capabilities: [chinese.understanding]
+    subsets:
+      advanced_mathematics, probability_and_statistics, discrete_mathematics, high_school_mathematics, middle_school_mathematics: [chinese.understanding, math.reasoning]
+      college_physics, college_chemistry, high_school_physics, high_school_chemistry, high_school_biology, middle_school_physics, middle_school_chemistry, middle_school_biology: [chinese.understanding, stem.reasoning]
+      computer_network, operating_system, computer_architecture, college_programming: [chinese.understanding, stem.reasoning]
+      law, legal_professional: [chinese.understanding, knowledge.law]
+      basic_medicine, clinical_medicine, physician, veterinary_medicine: [chinese.understanding, knowledge.medical]
+      logic: [chinese.understanding, logic.reasoning]
+  chinese_simpleqa:
+    title: "Chinese-SimpleQA"
+    categories: [Chinese, Knowledge, QA]
+    capabilities: [chinese.understanding]
+    subsets:
+      "自然与自然科学": [chinese.understanding, stem.reasoning]
+      "工程、技术与应用科学": [chinese.understanding, stem.reasoning]
+  cl_bench: {title: "CL-bench", categories: [InstructionFollowing, Reasoning], capabilities: [instruction.following, logic.reasoning, long_context.retrieval]}
+  cluewsc: {title: "CLUEWSC", categories: [Chinese, MCQ, Reasoning], capabilities: [commonsense.reasoning, chinese.understanding]}
+  cmath: {title: "CMATH", categories: [Chinese, Math, Reasoning], capabilities: [math.reasoning, chinese.understanding]}
+  cmmlu:
+    title: "C-MMLU"
+    categories: [Chinese, Knowledge, MCQ]
+    capabilities: [chinese.understanding]
+    subsets:
+      college_mathematics, elementary_mathematics, high_school_mathematics: [chinese.understanding, math.reasoning]
+      astronomy, conceptual_physics, electrical_engineering, genetics, high_school_biology, high_school_chemistry, high_school_physics, machine_learning, virology, computer_science, computer_security: [chinese.understanding, stem.reasoning]
+      college_law, international_law, jurisprudence, legal_and_moral_basis, professional_law: [chinese.understanding, knowledge.law]
+      anatomy, clinical_knowledge, college_medicine, college_medical_statistics, professional_medicine, traditional_chinese_medicine: [chinese.understanding, knowledge.medical]
+      logical: [chinese.understanding, logic.reasoning]
+  coin_flip: {title: "CoinFlip", categories: [Reasoning, Yes/No], capabilities: [logic.reasoning]}
+  commonsense_qa: {title: "CommonsenseQA", categories: [Commonsense, MCQ, Reasoning], capabilities: [commonsense.reasoning]}
+  competition_math: {title: "Competition-MATH", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  conll2003: {title: "CoNLL2003", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  conllpp: {title: "CoNLL++", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  contract_nli: {title: "ContractNLI (classification)", categories: [MCQ], capabilities: [logic.reasoning, long_context.retrieval]}
+  copious: {title: "Copious", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  cross_ner: {title: "CrossNER", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  data_collection: {title: "Data-Collection", categories: [Custom], capabilities: []}
+  docmath:
+    title: "DocMath"
+    categories: [LongContext, Math, Reasoning]
+    capabilities: [math.reasoning, long_context.retrieval]
+    subsets:
+      compshort_testmini, simpshort_testmini: [math.reasoning]
+  drivel_binary: {title: "DrivelologyBinaryClassification", categories: [Yes/No], capabilities: [nlp.classification, language.pragmatics]}
+  drivel_multilabel: {title: "DrivelologyMultilabelClassification", categories: [MCQ], capabilities: [nlp.classification, language.pragmatics]}
+  drivel_selection: {title: "DrivelologyNarrativeSelection", categories: [MCQ], capabilities: [nlp.classification, language.pragmatics]}
+  drivel_writing: {title: "DrivelologyNarrativeWriting", categories: [Knowledge, Reasoning], capabilities: [language.pragmatics]}
+  drop: {title: "DROP", categories: [Reasoning], capabilities: [reading.comprehension, math.reasoning]}
+  ds1000:
+    title: "DS-1000"
+    categories: [Coding]
+    capabilities: [code.data_science]
+    subsets:
+      Scipy: [code.data_science, code.scientific]
+  eq_bench: {title: "EQ-Bench", categories: [InstructionFollowing], capabilities: [emotion.understanding, instruction.following]}
+  fin_ner: {title: "FinNER", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  finqa: {title: "FinQA", categories: [Math, QA, Reasoning], capabilities: [math.reasoning, reading.comprehension]}
+  frames: {title: "FRAMES", categories: [LongContext, Reasoning], capabilities: [long_context.retrieval, logic.reasoning]}
+  general_arena: {title: "GeneralArena", categories: [Arena, Custom], capabilities: [instruction.open_ended]}
+  general_decision: {title: "General Decision", categories: [Custom, Decision], capabilities: [judgement.decision]}
+  general_mcq: {title: "General-MCQ", categories: [Custom, MCQ], capabilities: [knowledge.qa]}
+  general_qa: {title: "General-QA", categories: [Custom, QA], capabilities: [knowledge.qa]}
+  genia_ner: {title: "GeniaNER", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  gpqa_diamond: {title: "GPQA-Diamond", categories: [Knowledge, MCQ], capabilities: [stem.reasoning]}
+  gsm8k: {title: "GSM8K", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  gsm8k_indic:
+    title: "GSM8K-Indic"
+    categories: [Math, MultiLingual, Reasoning]
+    capabilities: [math.reasoning, multilingual.understanding]
+    subsets:
+      en: [math.reasoning]
+  halueval:
+    title: "HaluEval"
+    categories: [Hallucination, Knowledge, Yes/No]
+    capabilities: [truthfulness.factuality]
+    subsets:
+      dialogue_samples: [truthfulness.factuality, conversation.multi_turn]
+      summarization_samples: [truthfulness.factuality, summarization]
+  harvey_ner: {title: "HarveyNER", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  health_bench:
+    title: "HealthBench"
+    categories: [Knowledge, Medical, QA]
+    capabilities: [knowledge.medical]
+    subsets:
+      communication: [knowledge.medical, instruction.open_ended]
+      hedging: [knowledge.medical, truthfulness.factuality]
+      context_seeking: [knowledge.medical, conversation.multi_turn]
+      health_data_tasks: [knowledge.medical, math.reasoning]
+  hellaswag: {title: "HellaSwag", categories: [Commonsense, Knowledge, MCQ], capabilities: [commonsense.reasoning]}
+  hellaswag_hi: {title: "HellaSwag-Hindi", categories: [MCQ, Reasoning], capabilities: [commonsense.reasoning, multilingual.understanding]}
+  hle:
+    title: "Humanity's-Last-Exam"
+    categories: [Knowledge, QA]
+    capabilities: [knowledge.qa, stem.reasoning]
+    subsets:
+      "Biology/Medicine": [knowledge.qa, stem.reasoning, knowledge.medical]
+      "Humanities/Social Science": [knowledge.qa]
+  hle_diamond:
+    title: "Humanity's-Last-Exam-Diamond"
+    categories: [Knowledge, QA, Reasoning]
+    capabilities: [knowledge.qa, stem.reasoning]
+    subsets:
+      knowledge: [knowledge.qa]
+      reasoning: [stem.reasoning, logic.reasoning]
+  hmmt25: {title: "HMMT25", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  hmmt26: {title: "HMMT26", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  hmmt_nov25: {title: "HMMT-Nov-2025", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  humaneval: {title: "HumanEval", categories: [Coding], capabilities: [code.problem_solving]}
+  humaneval_plus: {title: "HumanEvalPlus", categories: [Coding], capabilities: [code.problem_solving]}
+  ifbench: {title: "IFBench", categories: [InstructionFollowing], capabilities: [instruction.following]}
+  ifeval: {title: "IFEval", categories: [InstructionFollowing], capabilities: [instruction.following]}
+  imo_answerbench: {title: "IMO-AnswerBench", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  indic_boolq:
+    title: "BoolQ-Indic"
+    categories: [MCQ, MultiLingual, ReadingComprehension]
+    capabilities: [reading.comprehension, multilingual.understanding]
+    subsets:
+      en: [reading.comprehension]
+  indic_param: {title: "IndicParam", categories: [Knowledge, MCQ, MultiLingual], capabilities: [knowledge.multilingual]}
+  iquiz:
+    title: "IQuiz"
+    categories: [Chinese, Knowledge, MCQ]
+    capabilities: [chinese.understanding]
+    subsets:
+      IQ: [chinese.understanding, logic.reasoning]
+      EQ: [chinese.understanding, emotion.understanding]
+  jevbench: {title: "JevBench public subset", categories: [Decision], capabilities: [judgement.decision]}
+  jnlpba: {title: "JNLPBA", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  jnlpba_rare: {title: "JNLPBA-Rare", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  kina: {title: "KINA", categories: [Knowledge, MCQ], capabilities: [knowledge.qa]}
+  lawbench:
+    title: "LawBench"
+    categories: [Knowledge, QA, Reasoning]
+    capabilities: [knowledge.law, chinese.understanding, logic.reasoning]
+    subsets:
+      1-1, 1-2: [knowledge.law, chinese.understanding]
+      2-2, 2-3, 2-4, 2-8, 2-9: [knowledge.law, chinese.understanding, nlp.classification]
+      2-5: [knowledge.law, chinese.understanding, reading.comprehension]
+      2-6: [knowledge.law, chinese.understanding, nlp.ner]
+      2-7: [knowledge.law, chinese.understanding, summarization]
+      2-10: [knowledge.law, chinese.understanding, nlp.extraction]
+      3-4, 3-5, 3-7: [knowledge.law, chinese.understanding, math.reasoning]
+      3-8: [knowledge.law, chinese.understanding, instruction.open_ended]
+  live_code_bench: {title: "Live-Code-Bench", categories: [Coding], capabilities: [code.problem_solving]}
+  locomo: {title: "LoCoMo", categories: [LongContext, MultiTurn, QA], capabilities: [long_context.memory, conversation.multi_turn]}
+  logi_qa: {title: "LogiQA", categories: [MCQ, Reasoning], capabilities: [logic.reasoning]}
+  longbench_v2: {title: "LongBench-v2", categories: [LongContext, MCQ, ReadingComprehension], capabilities: [long_context.retrieval, reading.comprehension]}
+  longmemeval: {title: "LongMemEval", categories: [LongContext, MultiTurn, QA, Retrieval], capabilities: [long_context.memory, long_context.retrieval, conversation.multi_turn]}
+  longpi_bench: {title: "LongPIBench", categories: [LongContext, Safety], capabilities: [safety.refusal, long_context.retrieval]}
+  maritime_bench: {title: "MaritimeBench", categories: [Chinese, Knowledge, MCQ], capabilities: [chinese.understanding]}
+  mask:
+    title: "MASK"
+    categories: [Knowledge, MultiTurn, QA, Safety]
+    capabilities: [truthfulness.honesty, conversation.multi_turn]
+    subsets:
+      known_facts, provided_facts, statistics: [truthfulness.honesty]
+  math_500: {title: "MATH-500", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  math_qa: {title: "MathQA", categories: [MCQ, Math, Reasoning], capabilities: [math.reasoning]}
+  mbpp: {title: "MBPP", categories: [Coding], capabilities: [code.problem_solving]}
+  mbpp_plus: {title: "MBPP-Plus", categories: [Coding], capabilities: [code.problem_solving]}
+  med_mcqa: {title: "Med-MCQA", categories: [Knowledge, MCQ], capabilities: [knowledge.medical]}
+  mgsm:
+    title: "MGSM"
+    categories: [Math, MultiLingual, Reasoning]
+    capabilities: [math.reasoning, multilingual.understanding]
+    subsets:
+      en: [math.reasoning]
+      zh: [math.reasoning, chinese.understanding]
+  milu:
+    title: "MILU"
+    categories: [Knowledge, MCQ, MultiLingual]
+    capabilities: [knowledge.multilingual]
+    subsets:
+      English: [knowledge.qa]
+  minerva_math: {title: "Minerva-Math", categories: [Math, Reasoning], capabilities: [math.reasoning]}
+  mit_movie_trivia: {title: "MIT-Movie-Trivia", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  mit_restaurant: {title: "MIT-Restaurant", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  mmlu:
+    title: "MMLU"
+    categories: [Knowledge, MCQ]
+    capabilities: [knowledge.qa]
+    subsets:
+      abstract_algebra, college_mathematics, elementary_mathematics, high_school_mathematics, high_school_statistics: [knowledge.qa, math.reasoning]
+      astronomy, conceptual_physics, college_physics, high_school_physics, college_biology, high_school_biology, college_chemistry, high_school_chemistry, electrical_engineering, college_computer_science, high_school_computer_science, machine_learning: [knowledge.qa, stem.reasoning]
+      anatomy, clinical_knowledge, medical_genetics, nutrition, virology, human_aging, college_medicine, professional_medicine: [knowledge.qa, knowledge.medical]
+      formal_logic, logical_fallacies: [knowledge.qa, logic.reasoning]
+      international_law, jurisprudence, professional_law: [knowledge.qa, knowledge.law]
+  mmlu_indic:
+    title: "MMLU-Indic"
+    categories: [Knowledge, MCQ, MultiLingual]
+    capabilities: [knowledge.multilingual]
+    subsets:
+      en: [knowledge.qa]
+  mmlu_pro:
+    title: "MMLU-Pro"
+    categories: [Knowledge, MCQ]
+    capabilities: [knowledge.qa, logic.reasoning]
+    subsets:
+      math: [knowledge.qa, math.reasoning]
+      chemistry, physics, biology, engineering: [knowledge.qa, stem.reasoning]
+      law: [knowledge.qa, knowledge.law]
+      health: [knowledge.qa, knowledge.medical]
+  mmlu_redux:
+    title: "MMLU-Redux"
+    categories: [Knowledge, MCQ]
+    capabilities: [knowledge.qa]
+    subsets:
+      abstract_algebra, college_mathematics, elementary_mathematics, high_school_mathematics, high_school_statistics: [knowledge.qa, math.reasoning]
+      astronomy, college_biology, college_chemistry, college_computer_science, college_physics, computer_security, conceptual_physics, electrical_engineering, high_school_biology, high_school_chemistry, high_school_computer_science, high_school_physics, machine_learning: [knowledge.qa, stem.reasoning]
+      formal_logic, logical_fallacies: [knowledge.qa, logic.reasoning]
+      international_law, jurisprudence, professional_law: [knowledge.qa, knowledge.law]
+      anatomy, clinical_knowledge, college_medicine, medical_genetics, nutrition, professional_medicine, virology: [knowledge.qa, knowledge.medical]
+  mmmlu:
+    title: "MMMLU"
+    categories: [Knowledge, MCQ, MultiLingual]
+    capabilities: [knowledge.multilingual]
+    subsets:
+      ZH_CN: [chinese.understanding]
+  mri_mcqa: {title: "MRI-MCQA", categories: [Knowledge, MCQ, Medical], capabilities: [knowledge.medical]}
+  mt_bench:
+    title: "MT-Bench"
+    categories: [Coding, InstructionFollowing, Math, MultiTurn, QA, Reasoning]
+    capabilities: [instruction.following, conversation.multi_turn, math.reasoning, code.problem_solving, knowledge.qa]
+    subsets:
+      writing: [instruction.following, conversation.multi_turn, instruction.open_ended]
+      roleplay: [instruction.following, conversation.multi_turn]
+      reasoning: [conversation.multi_turn, logic.reasoning]
+      math: [conversation.multi_turn, math.reasoning]
+      coding: [conversation.multi_turn, code.problem_solving]
+      extraction: [instruction.following, conversation.multi_turn, long_context.retrieval]
+      stem: [instruction.following, conversation.multi_turn, stem.reasoning]
+      humanities: [instruction.following, conversation.multi_turn, knowledge.qa]
+  multi_if:
+    title: "Multi-IF"
+    categories: [InstructionFollowing, MultiLingual, MultiTurn]
+    capabilities: [instruction.following, conversation.multi_turn, multilingual.understanding]
+    subsets:
+      Chinese: [instruction.following, conversation.multi_turn, chinese.understanding]
+  multi_nerd: {title: "MultiNERD", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  multiple_humaneval: {title: "MultiPL-E HumanEval", categories: [Coding], capabilities: [code.multi_language]}
+  multiple_mbpp: {title: "MultiPL-E MBPP", categories: [Coding], capabilities: [code.multi_language]}
+  music_trivia: {title: "MusicTrivia", categories: [Knowledge, MCQ], capabilities: [knowledge.qa]}
+  musr: {title: "MuSR", categories: [MCQ, Reasoning], capabilities: [logic.reasoning, commonsense.reasoning]}
+  ncbi: {title: "NCBI", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  needle_haystack:
+    title: "Needle-in-a-Haystack"
+    categories: [LongContext, Retrieval]
+    capabilities: [long_context.retrieval]
+    subsets:
+      chinese: [long_context.retrieval, chinese.understanding]
+  one_million_bench:
+    title: "$OneMillion-Bench"
+    categories: [Agent, Knowledge, MultiLingual, QA, Reasoning]
+    capabilities: [knowledge.expert, instruction.following, logic.reasoning]
+    subsets:
+      global_healthcare_and_medicine: [knowledge.expert, instruction.following, logic.reasoning, knowledge.medical]
+      global_law: [knowledge.expert, instruction.following, logic.reasoning, knowledge.law]
+      global_natural_sciences: [knowledge.expert, instruction.following, logic.reasoning, stem.reasoning]
+      cn_economics_and_finance, cn_industry: [knowledge.expert, instruction.following, logic.reasoning, chinese.understanding]
+      cn_healthcare_and_medicine: [knowledge.expert, instruction.following, logic.reasoning, chinese.understanding, knowledge.medical]
+      cn_law: [knowledge.expert, instruction.following, logic.reasoning, chinese.understanding, knowledge.law]
+      cn_natural_sciences: [knowledge.expert, instruction.following, logic.reasoning, chinese.understanding, stem.reasoning]
+  ontonotes5: {title: "OntoNotes5", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  open_decisions: {title: "OpenDecisions", categories: [Decision], capabilities: [judgement.decision]}
+  openai_mrcr: {title: "OpenAI MRCR", categories: [LongContext, Retrieval], capabilities: [long_context.retrieval]}
+  perspective_gap_prompt_writing: {title: "PerspectiveGap Prompt Writing", categories: [Agent, InstructionFollowing], capabilities: [instruction.prompt_writing, instruction.following]}
+  perspective_gap_role_assignment: {title: "PerspectiveGap Role Assignment", categories: [Agent, InstructionFollowing], capabilities: [instruction.prompt_writing, instruction.following]}
+  piqa: {title: "PIQA", categories: [Commonsense, MCQ, Reasoning], capabilities: [commonsense.reasoning]}
+  plawbench:
+    title: "PLawBench"
+    categories: [Chinese, Knowledge, QA, Reasoning]
+    capabilities: [knowledge.law, chinese.understanding, logic.reasoning]
+    subsets:
+      legal_consultation: [knowledge.law, chinese.understanding, conversation.multi_turn]
+      plaintiff_statement, defendant_statement: [knowledge.law, chinese.understanding, instruction.open_ended]
+  poly_math:
+    title: "PolyMath"
+    categories: [Math, MultiLingual, Reasoning]
+    capabilities: [math.reasoning, multilingual.understanding]
+    subsets:
+      en-low, en-medium, en-high, en-top: [math.reasoning]
+      zh-low, zh-medium, zh-high, zh-top: [math.reasoning, chinese.understanding]
+  prbench: {title: "PRBench", categories: [Knowledge, MultiTurn, QA, Reasoning], capabilities: [knowledge.qa, conversation.multi_turn, logic.reasoning]}
+  process_bench: {title: "ProcessBench", categories: [Math, Reasoning], capabilities: [math.process_verification]}
+  pubmedqa: {title: "PubMedQA", categories: [Knowledge, Yes/No], capabilities: [knowledge.medical]}
+  qasc: {title: "QASC", categories: [Knowledge, MCQ], capabilities: [knowledge.qa]}
+  race: {title: "RACE", categories: [MCQ, Reasoning], capabilities: [reading.comprehension]}
+  refcoco: {title: "RefCOCO", categories: [Grounding, ImageCaptioning, Knowledge, MultiModal], capabilities: [multimodal.grounding]}
+  reward_bench:
+    title: "RewardBench v1 (pairwise)"
+    categories: [MCQ]
+    capabilities: [judgement.decision]
+    subsets:
+      "mt-bench-easy, mt-bench-med, mt-bench-hard": [judgement.decision, conversation.multi_turn]
+      refusals-dangerous, refusals-offensive, xstest-should-refuse, donotanswer: [judgement.decision, safety.refusal]
+      xstest-should-respond: [judgement.decision, safety.over_refusal]
+      math-prm: [judgement.decision, math.process_verification]
+      hep-cpp, hep-go, hep-java, hep-js, hep-python, hep-rust: [judgement.decision, code.problem_solving]
+  safety_bench: {title: "SafetyBench", categories: [Knowledge, MCQ, MultiLingual], capabilities: [safety.refusal]}
+  salad_bench: {title: "SALAD-Bench", categories: [QA, Safety], capabilities: [safety.refusal]}
+  salad_bench_mcq: {title: "SALAD-Bench MCQ", categories: [MCQ, Safety], capabilities: [safety.refusal]}
+  sanskriti: {title: "Sanskriti", categories: [Knowledge, MCQ], capabilities: [knowledge.multilingual]}
+  scicode: {title: "SciCode", categories: [Coding], capabilities: [code.scientific]}
+  sciq: {title: "SciQ", categories: [Knowledge, MCQ, ReadingComprehension], capabilities: [knowledge.qa, reading.comprehension]}
+  seed_tts_eval: {title: "Seed-TTS-Eval", categories: [Audio, TextToSpeech], capabilities: [speech.synthesis]}
+  simple_qa: {title: "SimpleQA", categories: [Knowledge, QA], capabilities: [knowledge.qa]}
+  siqa: {title: "SIQA", categories: [Commonsense, MCQ, Reasoning], capabilities: [commonsense.reasoning]}
+  sleight_bench: {title: "SLEIGHT-Bench", categories: [Agent, Safety], capabilities: [safety.monitoring]}
+  sparc: {title: "SPaRC", categories: [Reasoning], capabilities: [logic.reasoning]}
+  stsb: {title: "STS-B Decision", categories: [Decision], capabilities: [judgement.decision]}
+  super_gpqa:
+    title: "SuperGPQA"
+    categories: [Knowledge, MCQ]
+    capabilities: [stem.reasoning]
+    subsets:
+      Philosophy, History, Language and Literature, Art Studies, Musicology: [knowledge.qa]
+      Applied Economics, Theoretical Economics, Law, Education, Sociology, Political Science, Business Administration, Public Administration, Military Science, Journalism and Communication, Physical Education, Psychology: [knowledge.qa]
+      Clinical Medicine, Basic Medicine, Pharmacy, Public Health and Preventive Medicine, Stomatology, Traditional Chinese Medicine, Veterinary Medicine: [knowledge.qa, knowledge.medical]
+  swe_bench_lite: {title: "SWE-bench_Lite", categories: [Coding], capabilities: [code.debugging]}
+  swe_bench_verified: {title: "SWE-bench_Verified", categories: [Coding], capabilities: [code.debugging]}
+  swe_bench_verified_mini: {title: "SWE-bench_Verified_mini", categories: [Coding], capabilities: [code.debugging]}
+  tablebench: {title: "TableBench", categories: [QA, Reasoning], capabilities: [reading.comprehension, math.reasoning]}
+  tat_qa: {title: "TAT-QA", categories: [Math, QA, Reasoning], capabilities: [math.reasoning, reading.comprehension]}
+  tool_bench: {title: "ToolBench-Static", categories: [FunctionCalling, Reasoning], capabilities: [agentic.single_turn_tool_call]}
+  trivia_qa: {title: "TriviaQA", categories: [QA, ReadingComprehension], capabilities: [knowledge.qa, reading.comprehension]}
+  triviaqa_indic:
+    title: "TriviaQA-Indic-MCQ"
+    categories: [Knowledge, MCQ, MultiLingual]
+    capabilities: [knowledge.multilingual]
+    subsets:
+      en: [knowledge.qa]
+  truthful_qa: {title: "TruthfulQA", categories: [Knowledge], capabilities: [truthfulness.factuality]}
+  tweebank_ner: {title: "TweeBankNER", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  tweet_ner_7: {title: "TweetNER7", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  winogrande: {title: "Winogrande", categories: [MCQ, Reasoning], capabilities: [commonsense.reasoning]}
+  wmt24pp:
+    title: "WMT2024++"
+    categories: [MachineTranslation, MultiLingual]
+    capabilities: [multilingual.translation]
+    subsets:
+      en-zh_cn, en-zh_tw: [multilingual.translation, chinese.understanding]
+  wnut2017: {title: "WNUT2017", categories: [Knowledge, NER], capabilities: [nlp.ner]}
+  xstest:
+    title: "XSTest"
+    categories: [QA, Safety]
+    capabilities: [safety.over_refusal]
+    subsets:
+      unsafe: [safety.refusal]
+  zebralogicbench: {title: "ZebraLogicBench", categories: [Reasoning], capabilities: [logic.reasoning]}
+
+  # ---- Agent benchmarks. `kimi_verifier` is an endpoint health check with no task content.
+  acebench:
+    title: "ACEBench"
+    categories: [Agent, FunctionCalling, MultiTurn]
+    capabilities: [agentic.single_turn_tool_call, agentic.multi_turn_stateful_tool_use]
+    subsets:
+      normal_single_turn_single_function, normal_similar_api, normal_atom_bool, normal_atom_enum, normal_atom_number, normal_atom_list, normal_atom_object_deep, normal_atom_object_short: [agentic.single_turn_tool_call]
+      normal_single_turn_parallel_function: [agentic.single_turn_tool_call, agentic.parallel_tool_calls]
+      normal_preference: [agentic.single_turn_tool_call, instruction.following]
+      normal_multi_turn_user_adjust, normal_multi_turn_user_switch, agent_multi_step: [agentic.multi_turn_stateful_tool_use]
+      agent_multi_turn: [agentic.multi_turn_stateful_tool_use, conversation.multi_turn]
+      special_incomplete, special_error_param: [agentic.clarify_when_under_specified]
+      special_irrelevant: [agentic.tool_irrelevance]
+  agentdojo: {title: "AgentDojo", categories: [Agent, FunctionCalling, Safety], capabilities: [agent.prompt_injection_resistance, agentic.multi_turn_stateful_tool_use]}
+  agentharm: {title: "AgentHarm", categories: [Agent, FunctionCalling, Safety], capabilities: [agent.harmful_task_refusal]}
+  agentharm_benign: {title: "AgentHarm Benign", categories: [Agent, FunctionCalling, Safety], capabilities: [agent.benign_task_completion]}
+  automation_bench:
+    title: "AutomationBench"
+    categories: [Agent, FunctionCalling, MultiTurn]
+    capabilities: [agentic.multi_turn_stateful_tool_use, agentic.multi_domain_state_ops]
+    subsets:
+      simple: [agentic.multi_turn_stateful_tool_use]
+  bfcl_v3:
+    title: "BFCL-v3"
+    categories: [Agent, FunctionCalling]
+    capabilities: [agentic.single_turn_tool_call, agentic.multi_turn_stateful_tool_use, agentic.tool_irrelevance, agentic.clarify_when_under_specified]
+    subsets:
+      simple, multiple, java, javascript, live_simple, live_multiple, live_relevance: [agentic.single_turn_tool_call]
+      parallel, live_parallel, parallel_multiple, live_parallel_multiple: [agentic.single_turn_tool_call, agentic.parallel_tool_calls]
+      irrelevance, live_irrelevance: [agentic.tool_irrelevance]
+      multi_turn_base: [agentic.multi_turn_stateful_tool_use]
+      multi_turn_long_context: [agentic.multi_turn_stateful_tool_use, long_context.retrieval]
+      multi_turn_miss_func, multi_turn_miss_param: [agentic.multi_turn_stateful_tool_use, agentic.clarify_when_under_specified]
+  bfcl_v4:
+    title: "BFCL-v4"
+    categories: [Agent, FunctionCalling]
+    capabilities: [agentic.single_turn_tool_call, agentic.multi_turn_stateful_tool_use, agentic.tool_irrelevance, agentic.clarify_when_under_specified, agentic.search_qa, long_context.memory]
+    subsets:
+      simple_python, simple_java, simple_javascript, multiple, live_simple, live_multiple, live_relevance: [agentic.single_turn_tool_call]
+      parallel, live_parallel, parallel_multiple, live_parallel_multiple: [agentic.single_turn_tool_call, agentic.parallel_tool_calls]
+      irrelevance, live_irrelevance: [agentic.tool_irrelevance]
+      memory_kv, memory_rec_sum, memory_vector: [agentic.multi_turn_stateful_tool_use, long_context.memory]
+      multi_turn_base: [agentic.multi_turn_stateful_tool_use]
+      multi_turn_long_context: [agentic.multi_turn_stateful_tool_use, long_context.retrieval]
+      multi_turn_miss_func, multi_turn_miss_param: [agentic.multi_turn_stateful_tool_use, agentic.clarify_when_under_specified]
+      web_search_base, web_search_no_snippet: [agentic.multi_turn_stateful_tool_use, agentic.search_qa]
+  browsecomp: {title: "BrowseComp", categories: [Agent, Knowledge, QA], capabilities: [agentic.search_qa, knowledge.qa]}
+  claw_eval:
+    title: "Claw-Eval"
+    categories: [Agent, MultiModal, MultiTurn]
+    capabilities: [agentic.multi_turn_stateful_tool_use, agent.terminal_task, conversation.multi_turn]
+    subsets:
+      general: [agentic.multi_turn_stateful_tool_use, agent.terminal_task]
+  cybench: {title: "Cybench (Unguided)", categories: [Agent, Safety], capabilities: [agent.terminal_task, knowledge.cybersecurity]}
+  deep_swe: {title: "DeepSWE", categories: [Agent, Coding, MultiTurn], capabilities: [code.debugging, agent.codebase_navigation, agent.terminal_task]}
+  deepsearchqa: {title: "DeepSearchQA", categories: [Agent, Knowledge, QA, Retrieval], capabilities: [agentic.search_qa, long_context.retrieval]}
+  gaia: {title: "GAIA", categories: [Agent, MultiTurn, Reasoning], capabilities: [agentic.search_qa, agentic.multi_turn_stateful_tool_use, logic.reasoning]}
+  gdpval: {title: "GDPval", categories: [Agent, Knowledge, MultiTurn], capabilities: [agent.workplace_task, knowledge.expert]}
+  general_fc: {title: "General-FunctionCalling", categories: [Agent, Custom, FunctionCalling], capabilities: [agentic.single_turn_tool_call, agentic.multi_turn_stateful_tool_use]}
+  job_bench: {title: "JobBench", categories: [Agent, Knowledge, MultiTurn], capabilities: [agent.workplace_task, instruction.following]}
+  k2_verifier: {title: "K2-Vendor-Verifier", categories: [Agent, FunctionCalling], capabilities: [agentic.single_turn_tool_call, agentic.multi_turn_stateful_tool_use]}
+  kimi_verifier: {title: "Kimi-Vendor-Verifier", categories: [Agent, FunctionCalling], capabilities: []}
+  mcp_atlas: {title: "MCP-Atlas", categories: [Agent, MultiTurn], capabilities: [agentic.multi_turn_stateful_tool_use]}
+  minimax_verifier: {title: "MiniMax-Vendor-Verifier", categories: [Agent, FunctionCalling], capabilities: [agentic.single_turn_tool_call, instruction.following]}
+  miniwob: {title: "MiniWoB", categories: [Agent, FunctionCalling, MultiModal, MultiTurn], capabilities: [agent.gui_operation, agentic.multi_turn_stateful_tool_use]}
+  officeqa: {title: "OfficeQA", categories: [Agent, Knowledge, QA], capabilities: [agentic.search_qa, long_context.retrieval]}
+  researchrubrics: {title: "ResearchRubrics", categories: [Agent, MultiTurn, Reasoning, Retrieval], capabilities: [agent.workplace_task, agentic.search_qa]}
+  skillsbench: {title: "SkillsBench", categories: [Agent, MultiTurn], capabilities: [agent.terminal_task, instruction.following]}
+  swe_atlas_qna: {title: "SWE-Atlas-QnA", categories: [Agent, Coding, MultiTurn], capabilities: [agent.codebase_navigation]}
+  swe_bench_lite_agentic: {title: "SWE-bench_Lite_Agentic", categories: [Coding], capabilities: [code.debugging, agent.codebase_navigation, agent.terminal_task]}
+  swe_bench_multilingual_agentic: {title: "SWE-bench_Multilingual_Agentic", categories: [Coding], capabilities: [code.debugging, code.multi_language, agent.codebase_navigation, agent.terminal_task]}
+  swe_bench_pro: {title: "SWE-bench_Pro", categories: [Coding], capabilities: [code.debugging, code.problem_solving, agent.codebase_navigation, agent.terminal_task]}
+  swe_bench_verified_agentic: {title: "SWE-bench_Verified_Agentic", categories: [Coding], capabilities: [code.debugging, agent.codebase_navigation, agent.terminal_task]}
+  swe_bench_verified_mini_agentic: {title: "SWE-bench_Verified_Mini_Agentic", categories: [Coding], capabilities: [code.debugging, agent.codebase_navigation, agent.terminal_task]}
+  tau2_bench: {title: "τ²-bench", categories: [Agent, FunctionCalling, Reasoning], capabilities: [agent.policy_grounded_service, agentic.clarify_when_under_specified, agentic.multi_turn_stateful_tool_use]}
+  tau3_bench:
+    title: "τ³-bench"
+    categories: [Agent, FunctionCalling, Reasoning]
+    capabilities: [agent.policy_grounded_service, agentic.clarify_when_under_specified, agentic.multi_turn_stateful_tool_use, long_context.retrieval]
+    subsets:
+      airline, retail, telecom: [agent.policy_grounded_service, agentic.clarify_when_under_specified, agentic.multi_turn_stateful_tool_use]
+  tau_bench: {title: "τ-bench", categories: [Agent, FunctionCalling, Reasoning], capabilities: [agent.policy_grounded_service, agentic.clarify_when_under_specified, agentic.multi_turn_stateful_tool_use]}
+  terminal_bench_v2: {title: "Terminal-Bench-2.0", categories: [Coding], capabilities: [agent.terminal_task, code.problem_solving]}
+  terminal_bench_v2_1: {title: "Terminal-Bench-2.1", categories: [Coding], capabilities: [agent.terminal_task, code.problem_solving]}
+  terminal_bench_v4: {title: "Terminal-Bench-4.0", categories: [Coding], capabilities: [agent.terminal_task, code.problem_solving]}
+  toolathlon: {title: "Toolathlon Official Service Wrapper", categories: [Agent, FunctionCalling, MultiTurn], capabilities: [agentic.multi_turn_stateful_tool_use]}
+  wide_search: {title: "WideSearch", categories: [Agent, MultiTurn, Retrieval], capabilities: [agentic.search_qa, instruction.following]}

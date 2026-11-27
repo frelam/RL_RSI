@@ -85,6 +85,306 @@ capabilities:
       - benchmark: demo
         match: "long_context"
 
+  # ---- Capabilities added for the EvalScope benchmarks. The benchmark -> capabilities
+  # mapping lives in configs/benchmarks.yaml; the names below are the vocabulary it uses.
+
+  # Knowledge and language understanding.
+  knowledge.qa:
+    description: "recall facts and answer general world-knowledge questions"
+    kind: knowledge
+    priority: 0.8
+    seeds: [trivia, exam questions, multi-subject MCQ, short factual answer]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  knowledge.expert:
+    description: "deliver expert-level professional work in finance, medicine, industry, law and science"
+    kind: knowledge
+    priority: 0.6
+    seeds: [financial analysis, medical case, legal memo, industrial report, scientific review]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  knowledge.medical:
+    description: "answer clinical, biomedical and health questions"
+    kind: knowledge
+    priority: 0.5
+    seeds: [clinical MCQ, biomedical literature QA, health advice, radiology]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  knowledge.law:
+    description: "answer legal questions and apply legal rules"
+    kind: knowledge
+    priority: 0.5
+    seeds: [statute lookup, legal exam, case analysis, regulatory compliance]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  knowledge.multilingual:
+    description: "answer knowledge questions written in languages other than English and Chinese"
+    kind: knowledge
+    priority: 0.5
+    seeds: [multilingual exam questions, regional knowledge, indic languages, bahasa]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  chinese.understanding:
+    description: "understand and answer Chinese-language questions"
+    kind: text
+    priority: 0.7
+    seeds: [中文考试, 中文知识问答, 中文阅读理解, 中文数学题]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  multilingual.understanding:
+    description: "understand and answer in languages other than English and Chinese"
+    kind: text
+    priority: 0.6
+    seeds: [indic languages, bahasa, hindi, spanish, portuguese, french]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  multilingual.translation:
+    description: "translate text between languages while keeping meaning, terminology and register"
+    kind: text
+    priority: 0.5
+    seeds: [document translation, terminology, low-resource language pair, formal register]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  reading.comprehension:
+    description: "answer questions from a passage, table or document by combining what it states"
+    kind: text
+    priority: 0.7
+    seeds: [passage QA, yes/no reading check, table QA, evidence span selection]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  commonsense.reasoning:
+    description: "apply everyday physical, social and situational common sense"
+    kind: text
+    priority: 0.7
+    seeds: [plausible continuation, coreference, social situation, physical affordance]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  math.process_verification:
+    description: "review a step-by-step math solution and locate the first wrong step"
+    kind: text
+    priority: 0.7
+    seeds: [error step detection, critique a proof, check arithmetic in a worked solution]
+    reward: {type: rule, name: numeric, weight: 1.0}
+    verifier: {type: rule, name: numeric, tolerance: 0.001}
+  judgement.decision:
+    description: "make a typed judgement call: pick a named option, rate on an ordered scale or choose the better response"
+    kind: text
+    priority: 0.6
+    seeds: [preference pair, ordinal rating, rule-based choice, yes probability]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  emotion.understanding:
+    description: "recognise emotional states and subtle emotional cues in dialogue"
+    kind: text
+    priority: 0.5
+    seeds: [emotion intensity rating, empathic reading of a conversation, mixed feelings]
+    reward: {type: rule, name: numeric, weight: 1.0}
+    verifier: {type: rule, name: numeric, tolerance: 0.001}
+  language.pragmatics:
+    description: "read implied meaning: humour, irony, paradoxical or pragmatic subtext"
+    kind: text
+    priority: 0.4
+    seeds: [irony detection, satire, meaningful nonsense, implied intent]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  nlp.ner:
+    description: "extract and label named entities in text"
+    kind: text
+    priority: 0.5
+    seeds: [biomedical entities, finance entities, nested entities, low-resource domain]
+    reward: {type: rule, name: regex, weight: 1.0}
+    verifier: {type: rule, name: regex}
+  nlp.classification:
+    description: "label a text with an intent, stance or category"
+    kind: text
+    priority: 0.5
+    seeds: [intent classification, topic labelling, yes/no classification]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  nlp.extraction:
+    description: "extract structured fields, events, relations and trigger words from text"
+    kind: text
+    priority: 0.5
+    seeds: [event detection, relation extraction, trigger word, structured slot filling]
+    reward: {type: rule, name: regex, weight: 1.0}
+    verifier: {type: rule, name: regex}
+  summarization:
+    description: "summarise a document faithfully and concisely without adding unsupported claims"
+    kind: text
+    priority: 0.5
+    seeds: [news summary, long report digest, public-opinion summary]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+
+  # Instruction following and conversation.
+  instruction.open_ended:
+    description: "give a helpful, well-organised answer to an open-ended request, judged by preference"
+    kind: text
+    priority: 0.8
+    seeds: [open question, everyday request, arena-style prompt, advice]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  instruction.prompt_writing:
+    description: "write prompts for other models and assign roles to them"
+    kind: text
+    priority: 0.5
+    seeds: [prompt rewriting, role assignment, agent instructions]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  conversation.multi_turn:
+    description: "stay coherent and keep earlier constraints across several conversation turns"
+    kind: text
+    priority: 0.8
+    seeds: [follow-up question, changing constraints, multi-turn instructions]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  long_context.memory:
+    description: "recall facts and preferences from an earlier long conversation or history"
+    kind: text
+    priority: 0.7
+    seeds: [session recall, user preference memory, multi-session QA]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+
+  # Truthfulness and safety.
+  truthfulness.factuality:
+    description: "give factually correct answers and avoid common misconceptions and hallucination"
+    kind: text
+    priority: 0.8
+    seeds: [misconception, hallucinated claim detection, unanswerable question]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  truthfulness.honesty:
+    description: "stay consistent with own beliefs under pressure instead of lying"
+    kind: text
+    priority: 0.7
+    seeds: [pressure to fabricate, doubling down, disinformation request]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  safety.refusal:
+    description: "refuse harmful requests, including ones embedded in a long or harmless-looking context"
+    kind: text
+    priority: 0.8
+    seeds: [harmful request, implicit harm in long context, unsafe advice]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  safety.over_refusal:
+    description: "answer benign requests that merely look sensitive instead of refusing them"
+    kind: text
+    priority: 0.6
+    seeds: [sensitive-looking safe prompt, edge-case request, mistaken refusal]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+  safety.monitoring:
+    description: "detect hidden malicious behaviour in agent transcripts"
+    kind: text
+    priority: 0.5
+    seeds: [covert tool misuse, exfiltration, benign transcript]
+    reward: {type: rule, name: numeric, weight: 1.0}
+    verifier: {type: rule, name: numeric, tolerance: 0.001}
+
+  # More code abilities, by what the task demands.
+  code.practical:
+    description: "use diverse libraries and their docs to complete a practical, instruction-rich task"
+    kind: text
+    priority: 0.9
+    seeds: [library call with documentation, heterogeneous APIs, complex instruction]
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    verifier: {type: rule, name: reasoning_rl}
+  code.data_science:
+    description: "complete data-science code with pandas, numpy, scipy and similar libraries"
+    kind: text
+    priority: 0.7
+    seeds: [dataframe manipulation, numerical routine, plotting, sklearn]
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    verifier: {type: rule, name: reasoning_rl}
+  code.scientific:
+    description: "write scientific computing code for physics, chemistry, biology and materials"
+    kind: text
+    priority: 0.7
+    seeds: [physics simulation, chemistry computation, biology model, numerical solver]
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    verifier: {type: rule, name: reasoning_rl}
+  code.multi_language:
+    description: "solve the same programming problem across many programming languages"
+    kind: text
+    priority: 0.6
+    seeds: [rust, go, java, javascript, swift]
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    verifier: {type: rule, name: reasoning_rl}
+  code.sql:
+    description: "write a SQL query that answers a question over a database schema"
+    kind: text
+    priority: 0.8
+    seeds: [multi-table join, aggregation, subquery, schema-grounded query]
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    verifier: {type: rule, name: reasoning_rl}
+
+  # Non-text modalities. No rule scorer applies; keep the catalog defaults.
+  multimodal.grounding:
+    description: "link a referring expression to a region of an image"
+    kind: text
+    priority: 0.4
+    seeds: [referring expression, region grounding]
+  speech.synthesis:
+    description: "convert text to speech with correct content and speaker similarity"
+    kind: text
+    priority: 0.4
+    seeds: [text to speech, speaker similarity]
+  knowledge.cybersecurity:
+    description: "apply offensive and defensive security knowledge: cryptography, forensics, exploitation, reverse engineering"
+    kind: knowledge
+    priority: 0.4
+    seeds: [ctf challenge, log forensics, binary exploitation, web vulnerability]
+    reward: {type: rule, name: contains, weight: 1.0}
+    verifier: {type: rule, name: contains}
+
+  # ---- Agent abilities measured by the EvalScope agent benchmarks in
+  # configs/benchmarks.yaml. They sit under `agent.` because `agentic.*` is kept
+  # equal to the capabilities that verl-toolRL datasets cover (see
+  # tests/test_verl_agentic_rl.py). No dataset backs them yet, so they keep the
+  # catalog defaults for reward and verifier.
+  agent.prompt_injection_resistance:
+    description: "ignore instructions injected through tool results or web pages and keep following the user's task"
+    kind: agentic
+    priority: 0.8
+    seeds: [injected instruction in tool output, poisoned web page, indirect prompt injection]
+  agent.harmful_task_refusal:
+    description: "refuse a task that needs tools and would cause harm"
+    kind: agentic
+    priority: 0.8
+    seeds: [harmful request with tools, harmful task under user pressure]
+  agent.benign_task_completion:
+    description: "still complete a benign task that resembles a harmful one"
+    kind: agentic
+    priority: 0.6
+    seeds: [benign look-alike of a harmful task, dual-use request]
+  agent.policy_grounded_service:
+    description: "serve a simulated user over several turns under a domain policy: ask for missing information and call the APIs"
+    kind: agentic
+    priority: 0.8
+    seeds: [airline booking, retail exchange, telecom plan change, banking policy]
+  agent.gui_operation:
+    description: "operate a web page or desktop interface through clicks and typing"
+    kind: agentic
+    priority: 0.6
+    seeds: [form filling, web navigation, UI element selection]
+  agent.terminal_task:
+    description: "solve a task in a terminal or OS environment: run commands, inspect files, produce artifacts"
+    kind: agentic
+    priority: 0.8
+    seeds: [shell task, environment setup, system administration, capture the flag]
+  agent.codebase_navigation:
+    description: "explore a real repository with shell and search tools to find and read the relevant code"
+    kind: agentic
+    priority: 0.7
+    seeds: [codebase question answering, locate the code for an issue, repo evidence gathering]
+  agent.workplace_task:
+    description: "complete an expert-level workplace task with tools and write the deliverable files"
+    kind: agentic
+    priority: 0.7
+    seeds: [research report, office deliverable, expert workflow, agent skills]
+
   # Tool-use agents, split by what each dataset focuses on. Sources in `seeds`
   # are the source names of verl-toolRL `agentic_rl_data`, mapped per row in
   # src/rsi/adapters/verl_agentic_rl.py. The `agentic_rl` scorer delegates to
