@@ -44,7 +44,7 @@ To add a trainer, implement `TrainerBackend.train()` and invoke its observer wit
 
 ```bash
 PYTHONPATH=src python -m rsi validate --config configs/default.yaml
-PYTHONPATH=src python -m rsi run --config configs/demo_mock.yaml --run-id demo --runs-dir runs
+PYTHONPATH=src python -m rsi run --config configs/default.yaml --run-id demo --runs-dir runs
 PYTHONPATH=src python -m rsi inspect runs/demo --history
 PYTHONPATH=src python -m unittest discover -s tests -t .
 ```

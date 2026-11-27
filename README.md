@@ -9,7 +9,7 @@ A Self-improvment RL Loop to automatically improve a model performance via reinf
 > PYTHONPATH=src python -m rsi validate --config configs/default.yaml
 >
 > # Run the classical loop offline
-> PYTHONPATH=src python -m rsi run --config configs/demo_mock.yaml --run-id demo
+> PYTHONPATH=src python -m rsi run --config configs/default.yaml --run-id demo
 >
 > # Inspect collection and validation scores and promotion decisions
 > PYTHONPATH=src python -m rsi inspect runs/demo --history
@@ -19,6 +19,14 @@ A Self-improvment RL Loop to automatically improve a model performance via reinf
 > ```
 >
 > Real vLLM / verl / EvalScope / agent harness integrations use adapters. Example settings are commented in `configs/default.yaml`. External commands are recorded in `runs/<id>/commands.jsonl`, and checkpoints are managed in `runs/<id>/checkpoints/registry.json`.
+>
+> The example datasets and benchmarks are hand-written examples:
+>
+> - `examples/datasets/*.jsonl` are local training sets registered in `configs/datasets.yaml`. When a judged defect asks for `kind: dataset`, the loop loads these rows instead of synthesizing them.
+> - `examples/benchmark_*.jsonl` are file-backed JSONL benchmarks. They need a real inference endpoint; with the mock endpoint every item scores 0.
+> - `configs/datasets.yaml` is the dataset registry, one entry per dataset (open-source or self-defined). Each entry gives the download `url`, the `abilities` it covers, the `reward` and `reward_code` that score a response, and the `preprocess` pipeline that turns the download into local rows.
+> - Datasets from verl `examples/reasoning_rl` (math, code, logic, stem, instruction following) keep their rows as is: the `jsonl` and `parquet` loaders map them to the capabilities. Each registered dataset holds one example row. Scoring uses the built-in reward in `src/rsi/rewards/reasoning/`.
+> - Datasets from verl-toolRL `agentic_rl_data` (tool-use agents) are filed under ten fine-grained `agentic.*` capabilities, one per dataset focus: single-turn tool call, stateful multi-turn tool use, interleaved user turns, clarify when under-specified, tool irrelevance, parallel tool calls, multi-domain state operations, search QA, math with code reasoning and code from tests. The source is the sub-capability. Each row keeps its tool schemas and task, and each registered dataset holds one example row built with the package's own loaders. Scoring uses the built-in reward in `src/rsi/rewards/agentic/`. `mt_fc` and `code_exec` scores need the env state of a multi-turn rollout.
 
 loop for: trajectory collect(rollout or from inference) -> analyze bad case -> task synthesis(data collect\env synthesis) -> RL train -> update checkpoint ->  traj collect
 

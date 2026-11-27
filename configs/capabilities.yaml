@@ -37,6 +37,32 @@ capabilities:
       - benchmark: demo
         match: "code"
 
+  # verl reasoning_rl abilities. `reasoning_rl` delegates to the verl
+  # src/rsi/rewards/reasoning/compute_score.py reward, routing on the data_source prefix.
+  code.problem_solving:
+    description: write a program that passes all hidden test cases for an algorithmic problem
+    kind: text
+    priority: 0.9
+    seeds: [stdin/stdout program, function implementation, algorithmic puzzle, edge-case handling]
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    verifier: {type: rule, name: reasoning_rl}
+
+  logic.reasoning:
+    description: solve rule-based puzzles and constraint problems with an exactly checkable answer
+    kind: text
+    priority: 0.8
+    seeds: [grid puzzle, symbolic deduction, arithmetic puzzle, path planning]
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    verifier: {type: rule, name: reasoning_rl}
+
+  stem.reasoning:
+    description: multi-step quantitative reasoning on science and engineering questions
+    kind: text
+    priority: 0.7
+    seeds: [physics, chemistry, biology, statistics]
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    verifier: {type: rule, name: reasoning_rl}
+
   instruction.following:
     description: satisfy multiple explicit formatting and content constraints
     kind: text
@@ -59,10 +85,78 @@ capabilities:
       - benchmark: demo
         match: "long_context"
 
-  agentic.tool_use:
-    description: plan and execute multi-turn tool use in an environment
+  # Tool-use agents, split by what each dataset focuses on. Sources in `seeds`
+  # are the source names of verl-toolRL `agentic_rl_data`, mapped per row in
+  # src/rsi/adapters/verl_agentic_rl.py. The `agentic_rl` scorer delegates to
+  # the built-in rewards in src/rsi/rewards/agentic/.
+  agentic.single_turn_tool_call:
+    description: "单轮工具调用: read the tool schemas and pick the right tool and arguments in one shot"
     kind: agentic
     priority: 0.9
-    seeds: [file editing, test-driven repair, shell tool use]
-    reward: {type: harness, name: task_success, weight: 1.0}
-    verifier: {type: harness, name: tests_pass}
+    seeds: [procedural_st, apigen, toolace, sealtools, apibank]
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    verifier: {type: rule, name: agentic_rl}
+  agentic.multi_turn_stateful_tool_use:
+    description: "多轮工具调用（有状态）: track state changed by earlier turns and reach the goal over several steps"
+    kind: agentic
+    priority: 0.9
+    seeds: [procedural_mt, apigen_mt, toucan, funreason_mt, toolmind]
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    verifier: {type: rule, name: agentic_rl}
+  agentic.interleaved_user_turns:
+    description: "交错多用户轮: a new user message arrives before the current turn is finished; keep earlier constraints while handling it"
+    kind: agentic
+    priority: 0.9
+    seeds: [interleaved_mt]
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    verifier: {type: rule, name: agentic_rl}
+  agentic.clarify_when_under_specified:
+    description: "信息不足时拒答/澄清: when a key slot is missing, the goal is unreachable or no tool fits, ask instead of calling blindly"
+    kind: agentic
+    priority: 0.9
+    seeds: [stateful_abstain, when2call]
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    verifier: {type: rule, name: agentic_rl}
+  agentic.tool_irrelevance:
+    description: "无关请求不调用工具: answer a request that needs no tool without calling one"
+    kind: agentic
+    priority: 0.9
+    seeds: [hammer]
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    verifier: {type: rule, name: agentic_rl}
+  agentic.parallel_tool_calls:
+    description: "同轮并行调用: issue independent calls together in one turn instead of one by one"
+    kind: agentic
+    priority: 0.9
+    seeds: [parallel_mt]
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    verifier: {type: rule, name: agentic_rl}
+  agentic.multi_domain_state_ops:
+    description: "多领域状态操作: modify and verify state in vehicle, travel, trading, microblog, messaging and ticketing"
+    kind: agentic
+    priority: 0.9
+    seeds: [vehicle_travel_mt, social_ops_mt]
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    verifier: {type: rule, name: agentic_rl}
+  agentic.search_qa:
+    description: "搜索问答: search over several turns, then answer"
+    kind: agentic
+    priority: 0.9
+    seeds: [search_r1, asearcher, a2search]
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    verifier: {type: rule, name: agentic_rl}
+  agentic.math_code_reasoning:
+    # simplerl_math3_5 is listed in the package docs but has no loader there.
+    description: "带代码推理的数学: compute with code, then give the answer"
+    kind: agentic
+    priority: 0.9
+    seeds: [reasoning_math, retool]
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    verifier: {type: rule, name: agentic_rl}
+  agentic.code_from_tests:
+    description: "按测试写代码: pass stdin/stdout test cases, using the execution result to fix the code"
+    kind: agentic
+    priority: 0.9
+    seeds: [code_exec]
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    verifier: {type: rule, name: agentic_rl}

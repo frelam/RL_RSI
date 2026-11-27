@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 
 from rsi.adapters.benchmark import JsonlBenchmark, aggregate_items
 from rsi.core.config import Config
 from rsi.core.jsonio import write_jsonl
+from rsi.core.scoring import score_text
 from rsi.core.types import Checkpoint, ItemResult
 from tests.helpers import REPO_ROOT, FakeRuntime
 
@@ -52,6 +54,18 @@ class BenchmarkTests(unittest.TestCase):
             self.assertAlmostEqual(report.aggregates["mean_score"], 1.0)
             self.assertAlmostEqual(report.capabilities["math.reasoning"], 1.0)
             self.assertTrue(all(item.passed for item in report.items))
+
+    def test_example_benchmark_files_load_and_score_without_errors(self) -> None:
+        expected = {
+            "benchmark_math.jsonl": {"math.reasoning": 3},
+            "benchmark_code_debugging.jsonl": {"code.debugging": 4},
+        }
+        for name, capabilities in expected.items():
+            cfg = Config({"path": str(REPO_ROOT / "examples" / name)}, config_dir=REPO_ROOT, repo_root=REPO_ROOT)
+            items = JsonlBenchmark(FakeRuntime(REPO_ROOT), cfg)._load_items()
+            self.assertEqual(Counter(item.capability for item in items), capabilities)
+            for item in items:
+                self.assertEqual(score_text("placeholder answer", item.reference, item.scorer, item.metadata), 0.0)
 
     def test_aggregate_capabilities_and_subcapabilities(self) -> None:
         items = [

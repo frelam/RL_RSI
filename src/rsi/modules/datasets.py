@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from rsi.adapters.verl_agentic_rl import agentic_row_to_row, is_agentic_row
+from rsi.adapters.verl_reasoning_rl import is_verl_row, verl_row_to_row
 from rsi.core.errors import AdapterError, ConfigError
 from rsi.core.jsonio import read_jsonl, stable_hash
 from rsi.core.types import ChatMessage, DataRequest, DataSample
@@ -21,13 +23,21 @@ class DatasetSpec:
     name: str
     loader: str
     url: str = ""
+    #: Local rows, already preprocessed; a file-backed dataset without one is never selected.
     path: str = ""
     abilities: dict[str, float] = field(default_factory=dict)
     priority: float = 0.5
     reward: dict[str, Any] = field(default_factory=dict)
+    #: ``path::function`` of the reward implementation; documentation only.
+    reward_code: str = ""
     split: str = "train"
     config: str | None = None
+    #: Load-time steps run by ``preprocess_row``.
     preprocess: list[str] = field(default_factory=list)
+    #: Script(s) that turned the raw download into the rows at ``path``; documentation only.
+    pipeline: str = ""
+    #: Keep only rows of this dataset when ``path`` mixes several (matches ``subcapability``).
+    source: str = ""
     rows: list[dict[str, Any]] = field(default_factory=list)
     license: str = ""
 
@@ -60,6 +70,15 @@ class DatasetCatalog:
                 abilities = {str(item): 1.0 for item in abilities}
             if not isinstance(abilities, dict):
                 raise ConfigError(f"Dataset {name!r} abilities must be a mapping or list")
+            # `preprocess` is a list of load-time steps, or a mapping that also
+            # names the script(s) which produced the rows (`pipeline`).
+            preprocess = value.get("preprocess") or {}
+            if isinstance(preprocess, dict):
+                pipeline, steps = str(preprocess.get("pipeline") or ""), preprocess.get("steps") or []
+            else:
+                pipeline, steps = "", preprocess
+            if not isinstance(steps, list):
+                raise ConfigError(f"Dataset {name!r} preprocess steps must be a list")
             self.datasets.append(
                 DatasetSpec(
                     name=str(name),
@@ -69,9 +88,12 @@ class DatasetCatalog:
                     abilities={str(k): _unit(v, f"{name}.abilities.{k}") for k, v in abilities.items()},
                     priority=_unit(value.get("priority", 0.5), f"{name}.priority"),
                     reward=dict(value.get("reward") or {}),
+                    reward_code=str(value.get("reward_code") or ""),
                     split=str(value.get("split", "train")),
                     config=str(value["config"]) if value.get("config") is not None else None,
-                    preprocess=[str(v) for v in value.get("preprocess", [])],
+                    preprocess=[str(v) for v in steps],
+                    pipeline=pipeline,
+                    source=str(value.get("source") or ""),
                     rows=[row for row in value.get("rows", []) if isinstance(row, dict)],
                     license=str(value.get("license") or ""),
                 )
@@ -79,6 +101,10 @@ class DatasetCatalog:
 
     def select(self, priorities: dict[str, float], count: int) -> DatasetSelection:
         return select_datasets(self.datasets, priorities, count)
+
+
+#: Loaders that read the rows from `path`.
+_FILE_LOADERS = frozenset({"jsonl", "parquet"})
 
 
 def _unit(value: Any, name: str) -> float:
@@ -96,7 +122,8 @@ def select_datasets(
 ) -> DatasetSelection:
     """Greedily maximize uncovered ability priority, then derive mix ratios."""
     remaining = {key: _unit(value, f"priority.{key}") for key, value in priorities.items()}
-    candidates = list(datasets)
+    # A file-backed dataset without local rows is declared only; it cannot serve a request.
+    candidates = [item for item in datasets if item.path or item.loader not in _FILE_LOADERS]
     selected: list[DatasetSpec] = []
     contribution: dict[str, float] = {}
     while candidates and remaining and len(selected) < max(0, count):
@@ -151,10 +178,14 @@ def fetch_dataset_rows(spec: DatasetSpec, root: str | Path) -> list[dict[str, An
     if spec.loader == "synthetic":
         rows = list(spec.rows)
     elif spec.loader == "jsonl":
-        path = Path(spec.path)
-        if not path.is_absolute():
-            path = Path(root) / path
+        path = _resolve_path(spec, root)
         rows = read_jsonl(path)
+    elif spec.loader == "parquet":
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as exc:
+            raise AdapterError("Parquet datasets require the optional 'pyarrow' package") from exc
+        rows = pq.read_table(_resolve_path(spec, root)).to_pylist()
     elif spec.loader == "web":
         if not spec.url:
             raise ConfigError(f"Web dataset {spec.name!r} requires url")
@@ -174,7 +205,19 @@ def fetch_dataset_rows(spec: DatasetSpec, root: str | Path) -> list[dict[str, An
         rows = [dict(row) for row in dataset]
     else:
         raise ConfigError(f"Unknown dataset loader {spec.loader!r} for {spec.name!r}")
-    return [row for row in rows if isinstance(row, dict)]
+    return [_adapt_verl_row(row) for row in rows if isinstance(row, dict)]
+
+
+def _adapt_verl_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Map verl rows (agentic tasks first, then reasoning_rl) to the generic shape."""
+    if is_agentic_row(row):
+        return agentic_row_to_row(row)
+    return verl_row_to_row(row) if is_verl_row(row) else row
+
+
+def _resolve_path(spec: DatasetSpec, root: str | Path) -> Path:
+    path = Path(spec.path).expanduser()
+    return path if path.is_absolute() else Path(root) / path
 
 
 def preprocess_row(row: dict[str, Any], methods: list[str]) -> dict[str, Any] | None:
@@ -212,7 +255,7 @@ def rows_to_samples(
     ability = request.capability
     for index, original in enumerate(rows):
         row = preprocess_row(original, spec.preprocess)
-        if row is None:
+        if row is None or (spec.source and row.get("subcapability") != spec.source):
             continue
         capability = str(row.get("capability") or row.get("ability") or ability)
         if capability != ability and spec.abilities.get(capability, 0.0) <= 0:

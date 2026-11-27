@@ -9,6 +9,7 @@ from typing import Any
 
 from rsi.core.interfaces import DatasetBuilder
 from rsi.core.jsonio import atomic_write_json, now_iso, stable_hash, write_jsonl
+from rsi.adapters.verl_agentic_rl import tools_for_verl
 from rsi.core.registry import register
 from rsi.core.types import DataPlan, DataSample, DatasetArtifact
 from rsi.modules.data_mixing import group_key
@@ -182,27 +183,41 @@ class JsonlDatasetBuilder(DatasetBuilder):
                 *([{"role": "assistant", "content": sample.response}] if sample.response else []),
             ]
         if self.schema == "verl_jsonl":
+            # Rows imported from verl keep their original data_source, ability
+            # and extra_info so the verl reward dispatches exactly as upstream.
+            verl = sample.metadata.get("verl") if isinstance(sample.metadata.get("verl"), dict) else {}
+            extra_info = {
+                "id": sample.id,
+                "kind": sample.kind,
+                "subcapability": sample.subcapability,
+                "difficulty": sample.difficulty,
+                "quality": sample.quality,
+                "verifier": sample.verifier,
+                "env_path": sample.env_path,
+                "round": sample.round,
+                "source": sample.source,
+                **(verl.get("extra_info") or {}),
+            }
             row: dict[str, Any] = {
-                "data_source": sample.source or f"rsi.{sample.kind}",
+                "data_source": verl.get("data_source") or sample.source or f"rsi.{sample.kind}",
                 "prompt": [{"role": "user", "content": sample.prompt}],
                 "response": sample.response,
-                "ability": sample.capability,
+                "ability": verl.get("ability") or sample.capability,
                 "reward_model": {
                     "style": (sample.verifier or {}).get("type", "rule"),
                     "ground_truth": sample.reference or "",
                 },
-                "extra_info": {
-                    "id": sample.id,
-                    "kind": sample.kind,
-                    "subcapability": sample.subcapability,
-                    "difficulty": sample.difficulty,
-                    "quality": sample.quality,
-                    "verifier": sample.verifier,
-                    "env_path": sample.env_path,
-                    "round": sample.round,
-                    "source": sample.source,
-                },
+                "extra_info": extra_info,
+                "capability": sample.capability,
+                "verifier": sample.verifier,
             }
+            agentic = sample.metadata.get("agentic") if isinstance(sample.metadata.get("agentic"), dict) else {}
+            if agentic:
+                # Agentic rows carry the tool schemas and a system prompt.
+                row["prompt"] = messages
+                row["tools"] = tools_for_verl(agentic.get("tools"))
+            if self.include_metadata:
+                row["metadata"] = sample.metadata
             return row
         row = {
             "id": sample.id,

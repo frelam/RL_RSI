@@ -1,21 +1,498 @@
-# Curated dataset sources. Remote sources should be pinned and license-reviewed.
+# Dataset registry: one entry per dataset, open-source or self-defined. Each entry has
+#   name          the key
+#   url           where the raw data is downloaded from (empty for generated data)
+#   path          the local rows, already preprocessed
+#   abilities     capability -> how well the dataset covers it (0 to 1)
+#   reward        {type, name, weight}; `name` is the scorer that scores a response
+#   reward_code   where that reward is implemented (`path::function`)
+#   preprocess    {pipeline: script(s) that turn the download into `path`, steps: load-time steps}
+# Optional: license, priority (0 to 1, how ready the local rows are), source (keep only
+# the rows of this dataset when `path` mixes several), config and split (huggingface
+# loader). Remote sources should be pinned and license-reviewed.
+#
+# Entries with local rows are active. A file-backed entry without `path` (nothing
+# downloaded yet) is declared only and is skipped when datasets are selected.
+# verl-style rows (verl `examples/reasoning_rl`, verl-toolRL `agentic_rl_data`) are
+# mapped to the capabilities by src/rsi/adapters/verl_*.py when loaded; their
+# rewards are the built-ins under src/rsi/rewards/. Each active
+# verl-style `path` holds one example row and has priority 0.3: 8 rows come from the
+# verl datasets, 13 were built with the package's own loaders and generators, and the
+# math_bigmath and logic_reasoning_gym rows are hand-written (gated repo, missing package).
 datasets:
-  demo_math:
-    loader: synthetic
+  math_word_problems:
+    loader: jsonl
+    path: examples/datasets/math_word_problems.jsonl
     priority: 0.8
     abilities: {math.reasoning: 1.0}
     reward: {type: rule, name: numeric, weight: 1.0}
+    reward_code: src/rsi/core/scoring.py::score_text (numeric)
     license: synthetic
-    preprocess: [normalize_chat, drop_empty, deduplicate]
-    rows:
-      - {id: math-1, question: "What is 6 times 7?", answer: "42", reference: "42", capability: math.reasoning}
-      - {id: math-2, question: "What is 9 times 8?", answer: "72", reference: "72", capability: math.reasoning}
-  demo_code:
-    loader: synthetic
+    preprocess:
+      pipeline: hand-written rows
+      steps: [normalize_chat, strip_text, drop_empty]
+
+  code_debugging:
+    loader: jsonl
+    path: examples/datasets/code_debugging.jsonl
     priority: 0.7
     abilities: {code.debugging: 1.0}
     reward: {type: rule, name: contains, weight: 1.0}
+    reward_code: src/rsi/core/scoring.py::score_text (contains)
     license: synthetic
-    preprocess: [normalize_chat, drop_empty, deduplicate]
+    preprocess:
+      pipeline: hand-written rows
+      steps: [normalize_chat, strip_text, drop_empty]
+
+  # ---- verl `examples/reasoning_rl` (math, code, logic, stem, instruction following) ----
+  # Rewards: src/rsi/rewards/reasoning/compute_score.py routes on the data_source
+  # prefix (built in, no verl checkout needed). The pool a
+  # pipeline script writes mixes datasets (data_source math_*, ...), so `source`
+  # keeps this dataset's rows.
+  math_dapo:
+    url: https://huggingface.co/datasets/BytedTsinghua-SIA/DAPO-Math-17k
+    license: unverified
+    path: examples/datasets/math_dapo.jsonl
+    priority: 0.3
+    abilities: {math.reasoning: 0.9}
+    source: math_dapo
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/reasoning/compute_score.py::compute_score  # math_: math_verify, then math_dapo
+    preprocess:
+      pipeline: examples/reasoning_rl/scripts/to_parquet_math.py  # HF -> verl parquet (train, config default)
+      steps: []
+
+  math_bigmath:
+    url: https://huggingface.co/datasets/SynthLabsAI/Big-Math-RL-Verified
+    license: unverified
+    path: examples/datasets/math_bigmath.jsonl
+    priority: 0.3
+    abilities: {math.reasoning: 0.9}
+    source: math_bigmath
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/reasoning/compute_score.py::compute_score  # math_: math_verify, then math_dapo
+    preprocess:
+      pipeline: examples/reasoning_rl/scripts/to_parquet_math.py  # HF -> verl parquet (train)
+      steps: []
+
+  code_deepcoder:
+    url: https://huggingface.co/datasets/agentica-org/DeepCoder-Preview-Dataset
+    license: unverified
+    path: examples/datasets/code_deepcoder.jsonl
+    priority: 0.3
+    abilities: {code.problem_solving: 0.9}
+    source: code_deepcoder
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/reasoning/compute_score.py::compute_score  # code_: run the test cases in a sandbox
+    preprocess:
+      pipeline: examples/reasoning_rl/scripts/to_parquet_code.py  # HF -> verl parquet (train)
+      steps: []
+
+  code_codecontests:
+    url: https://huggingface.co/datasets/deepmind/code_contests
+    license: unverified
+    path: examples/datasets/code_codecontests.jsonl
+    priority: 0.3
+    abilities: {code.problem_solving: 0.9}
+    source: code_codecontests
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/reasoning/compute_score.py::compute_score  # code_: run the test cases in a sandbox
+    preprocess:
+      pipeline: examples/reasoning_rl/scripts/to_parquet_code.py  # HF -> verl parquet (train)
+      steps: []
+
+  code_apps:
+    url: https://huggingface.co/datasets/codeparrot/apps
+    license: unverified
+    path: examples/datasets/code_apps.jsonl
+    priority: 0.3
+    abilities: {code.problem_solving: 0.9}
+    source: code_apps
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/reasoning/compute_score.py::compute_score  # code_: run the test cases in a sandbox
+    preprocess:
+      pipeline: examples/reasoning_rl/scripts/to_parquet_code.py  # HF -> verl parquet (train)
+      steps: []
+
+  logic_synlogic:
+    url: https://huggingface.co/datasets/MiniMaxAI/SynLogic
+    license: unverified
+    path: examples/datasets/logic_synlogic.jsonl
+    priority: 0.3
+    abilities: {logic.reasoning: 0.9}
+    source: logic_synlogic
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/reasoning/compute_score.py::compute_score  # logic_: normalised answer match
+    preprocess:
+      pipeline: examples/reasoning_rl/scripts/to_parquet_logic.py  # HF (configs easy + hard) -> verl parquet (train)
+      steps: []
+
+  logic_enigmata:
+    url: https://huggingface.co/datasets/BytedTsinghua-SIA/Enigmata-Data
+    license: unverified
+    path: examples/datasets/logic_enigmata.jsonl
+    priority: 0.3
+    abilities: {logic.reasoning: 0.9}
+    source: logic_enigmata
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/reasoning/compute_score.py::compute_score  # logic_: task-aware verifier (enigmata_verifier.py::verify_enigmata), then normalised answer match
+    preprocess:
+      pipeline: examples/reasoning_rl/scripts/to_parquet_logic.py  # HF task jsonl files -> verl parquet (train)
+      steps: []
+
+  logic_reasoning_gym:
+    # Generated locally from a seed; the package is installed from PyPI.
+    url: https://pypi.org/project/reasoning-gym/
+    license: generated
+    path: examples/datasets/logic_reasoning_gym.jsonl
+    priority: 0.3
+    abilities: {logic.reasoning: 0.9}
+    source: logic_reasoning_gym
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/reasoning/compute_score.py::compute_score  # answer match, then reasoning_gym_verifier.py seeded by extra_info.seed
+    preprocess:
+      pipeline: examples/reasoning_rl/scripts/to_parquet_logic.py  # reasoning_gym task x seed -> verl parquet
+      steps: []
+
+  stem_drsci:
+    url: https://huggingface.co/datasets/MiniByte-666/Dr.SCI
+    license: unverified
+    path: examples/datasets/stem_drsci.jsonl
+    priority: 0.3
+    abilities: {stem.reasoning: 0.9}
+    source: stem_drsci
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/reasoning/compute_score.py::compute_score  # stem_: same as math
+    preprocess:
+      pipeline: examples/reasoning_rl/scripts/to_parquet_stem.py  # HF Dr_SCI_verifiable.parquet -> verl parquet (train)
+      steps: []
+
+  if_nemotron:
+    url: https://huggingface.co/datasets/nvidia/Nemotron-RL-instruction_following
+    license: unverified
+    path: examples/datasets/if_nemotron.jsonl
+    priority: 0.3
+    abilities: {instruction.following: 0.9}
+    source: if_nemotron
+    reward: {type: rule, name: reasoning_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/reasoning/compute_score.py::compute_score  # if_: 1.0 only when every constraint passes (if_verifier.py)
+    preprocess:
+      pipeline: examples/reasoning_rl/scripts/to_parquet_if.py  # HF -> verl parquet (train)
+      steps: []
+
+  # ---- verl-toolRL `agentic_rl_data` (tool-use agents) ----
+  # Rewards: src/rsi/rewards/agentic/<task_type>.py::reward(task, trajectory); the
+  # `agentic_rl` scorer dispatches on the task type (built in, no verl-toolRL
+  # checkout needed). mt_fc and code_exec need the env
+  # state of a multi-turn rollout; search_qa needs a served Wikipedia + E5 index.
+  # The pipeline is <loader or generator> -> scripts/build_mixture.py ->
+  # scripts/export_verl_parquet.py, which writes one pool for all sources
+  # (data_source agentic_rl), so `source` keeps this dataset's rows.
+  apigen:
+    url: https://huggingface.co/datasets/Salesforce/xlam-function-calling-60k
+    license: cc-by-4.0 (unverified)
+    path: examples/datasets/apigen.jsonl
+    priority: 0.3
+    abilities: {agentic.single_turn_tool_call: 0.9}
+    source: apigen
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/st_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/apigen.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF json -> rows with empty answers dropped
+      steps: []
+
+  procedural_st:
+    # Generated; nothing to download.
+    license: generated
+    path: examples/datasets/procedural_st.jsonl
+    priority: 0.3
+    abilities: {agentic.single_turn_tool_call: 0.9}
+    source: procedural_st
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/st_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/generators/procedural_st_tasks.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py
+      steps: []
+
+  procedural_mt:
+    license: generated
+    path: examples/datasets/procedural_mt.jsonl
+    priority: 0.3
+    abilities: {agentic.multi_turn_stateful_tool_use: 0.9}
+    source: procedural_mt
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/mt_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/generators/stateful_tasks.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py
+      steps: []
+
+  interleaved_mt:
+    license: generated
+    path: examples/datasets/interleaved_mt.jsonl
+    priority: 0.3
+    abilities: {agentic.interleaved_user_turns: 0.9}
+    source: interleaved_mt
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/mt_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/generators/interleaved_tasks.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py
+      steps: []
+
+  stateful_abstain:
+    license: generated
+    path: examples/datasets/stateful_abstain.jsonl
+    priority: 0.3
+    abilities: {agentic.clarify_when_under_specified: 0.9}
+    source: stateful_abstain
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/mt_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/generators/abstain_tasks.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py
+      steps: []
+
+  parallel_mt:
+    license: generated
+    path: examples/datasets/parallel_mt.jsonl
+    priority: 0.3
+    abilities: {agentic.parallel_tool_calls: 0.9}
+    source: parallel_mt
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/mt_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/generators/parallel_mt_tasks.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py
+      steps: []
+
+  vehicle_travel_mt:
+    license: generated
+    path: examples/datasets/vehicle_travel_mt.jsonl
+    priority: 0.3
+    abilities: {agentic.multi_domain_state_ops: 0.9}
+    source: vehicle_travel_mt
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/mt_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/generators/vehicle_travel_tasks.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py
+      steps: []
+
+  social_ops_mt:
+    license: generated
+    path: examples/datasets/social_ops_mt.jsonl
+    priority: 0.3
+    abilities: {agentic.multi_domain_state_ops: 0.9}
+    source: social_ops_mt
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/mt_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/generators/social_ops_tasks.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py
+      steps: []
+
+  when2call:
+    # train_sft only: the test split derives from BFCL v2 Live and must not be trained on.
+    url: https://huggingface.co/datasets/nvidia/When2Call
+    license: apache-2.0 (repository; dataset card unverified)
+    path: examples/datasets/when2call.jsonl
+    priority: 0.3
+    abilities: {agentic.clarify_when_under_specified: 0.9, agentic.single_turn_tool_call: 0.3}
+    source: when2call
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/abstain.py::reward (rows without a tool call), src/rsi/rewards/agentic/st_fc.py::reward (rows with one)
+    preprocess:
+      pipeline: agentic_rl_data/loaders/when2call.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF train_sft; no tool call -> abstain, else st_fc
+      steps: []
+
+  hammer:
+    url: https://huggingface.co/datasets/MadeAgents/xlam-irrelevance-7.5k
+    license: cc-by-4.0 (unverified)
+    path: examples/datasets/hammer.jsonl
+    priority: 0.3
+    abilities: {agentic.tool_irrelevance: 0.9, agentic.single_turn_tool_call: 0.3}
+    source: hammer
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/irrelevance.py::reward (rows with an empty answer), src/rsi/rewards/agentic/st_fc.py::reward (rows with an answer)
+    preprocess:
+      pipeline: agentic_rl_data/loaders/hammer.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF; empty answer -> irrelevance, else st_fc
+      steps: []
+
+  search_r1:
+    url: https://huggingface.co/datasets/RUC-NLPIR/FlashRAG_datasets
+    config: nq
+    license: unverified
+    path: examples/datasets/search_r1.jsonl
+    priority: 0.3
+    abilities: {agentic.search_qa: 0.9}
+    source: search_r1
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/search_qa.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/search_r1.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF config nq, train
+      steps: []
+
+  reasoning_math:
+    # Any verl-style math parquet works (DAPO-Math-17k, DeepScaleR, ...); DAPO-Math-17k
+    # is the example. Only a python tool is attached.
+    url: https://huggingface.co/datasets/BytedTsinghua-SIA/DAPO-Math-17k
+    license: unverified
+    path: examples/datasets/reasoning_math.jsonl
+    priority: 0.3
+    abilities: {agentic.math_code_reasoning: 0.9}
+    source: reasoning_math
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/math_ci.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/reasoning_math.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py
+      steps: []
+
+  code_exec:
+    url: https://huggingface.co/datasets/codeparrot/apps
+    license: mit (apps repository; dataset card unverified)
+    path: examples/datasets/code_exec.jsonl
+    priority: 0.3
+    abilities: {agentic.code_from_tests: 0.9}
+    source: code_exec
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/code_exec.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/code_exec.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # kind apps; also BAAI/TACO, deepmind/code_contests
+      steps: []
+
+  # ---- Declared, not downloaded: add `path: examples/datasets/<name>.jsonl` to activate ----
+
+  sealtools:
+    url: https://github.com/fairyshine/Seal-Tools
+    license: apache-2.0
+    abilities: {agentic.single_turn_tool_call: 0.9}
+    source: sealtools
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/st_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/sealtools.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # GitHub Seal-Tools_Dataset/{tool,train}.jsonl; nested calls dropped
+      steps: []
+
+  toolace:
+    url: https://huggingface.co/datasets/Team-ACE/ToolACE
+    license: apache-2.0 (unverified)
+    abilities: {agentic.single_turn_tool_call: 0.9}
+    source: toolace
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/st_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/toolace.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF; dialogues split into single user turns
+      steps: []
+
+  apibank:
+    url: https://github.com/AlibabaResearch/DAMO-ConvAI
+    license: mit
+    abilities: {agentic.single_turn_tool_call: 0.9}
+    source: apibank
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/st_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/apibank.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # GitHub api-bank/; level-1 dialogues split per API turn
+      steps: []
+
+  asearcher:
+    url: https://huggingface.co/datasets/inclusionAI/ASearcher-train-data
+    license: unverified
+    abilities: {agentic.search_qa: 0.9}
+    source: asearcher
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/search_qa.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/asearcher.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF
+      steps: []
+
+  a2search:
+    url: https://github.com/zfj1998/A2Search
+    license: apache-2.0
+    abilities: {agentic.search_qa: 0.9}
+    source: a2search
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/search_qa.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/a2search.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # GitHub dataset/a2search_musique_2wiki_nq.parquet
+      steps: []
+
+  retool:
+    url: https://huggingface.co/datasets/JoeYing/ReTool-SFT
+    license: unverified
+    abilities: {agentic.math_code_reasoning: 0.9}
+    source: retool
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/math_ci.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/retool.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF; keeps the final answer only
+      steps: []
+
+  funreason_mt:
+    url: https://huggingface.co/datasets/Bingguang/FunReason-MT
+    license: unverified
+    abilities: {agentic.multi_turn_stateful_tool_use: 0.9}
+    source: funreason_mt
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/mt_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/funreason_mt.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF train; decontaminate against BFCL v3
+      steps: []
+
+  apigen_mt:
+    url: https://huggingface.co/datasets/Salesforce/APIGen-MT-5k
+    license: unverified
+    abilities: {agentic.multi_turn_stateful_tool_use: 0.9}
+    source: apigen_mt
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/mt_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/apigen_mt.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF train
+      steps: []
+
+  toolmind:
+    url: https://huggingface.co/datasets/Nanbeige/ToolMind
+    license: unverified
+    abilities: {agentic.multi_turn_stateful_tool_use: 0.9}
+    source: toolmind
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/mt_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/toolmind.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF train; dedup against apigen and toolace
+      steps: []
+
+  toucan:
+    url: https://huggingface.co/datasets/Agent-Ark/Toucan-1.5M
+    license: mit (repository; dataset card unverified)
+    abilities: {agentic.multi_turn_stateful_tool_use: 0.9}
+    source: toucan
+    reward: {type: rule, name: agentic_rl, weight: 1.0}
+    reward_code: src/rsi/rewards/agentic/mt_fc.py::reward
+    preprocess:
+      pipeline: agentic_rl_data/loaders/toucan.py (via agentic_rl_data/scripts/build_mixture.py) -> agentic_rl_data/scripts/export_verl_parquet.py  # HF train; subsample
+      steps: []
+
+  # Self-defined rows declared inline:
+  my_math:
+    loader: synthetic
+    license: synthetic
+    abilities: {math.reasoning: 1.0}
+    reward: {type: rule, name: numeric, weight: 1.0}
+    reward_code: src/rsi/core/scoring.py::score_text (numeric)
+    preprocess: []
     rows:
-      - {id: code-1, question: "Why does this loop skip the last item?", answer: "Use an inclusive end bound or iterate directly over the items.", capability: code.debugging}
+      - {question: "What is 6 times 7?", answer: "42", reference: "42"}
+
+  # Hugging Face dataset; needs the optional `datasets` package. `url` is the repo id.
+  gsm8k:
+    loader: huggingface
+    url: openai/gsm8k
+    config: main
+    split: train
+    abilities: {math.reasoning: 0.8}
+    reward: {type: rule, name: numeric, weight: 1.0}
+    reward_code: src/rsi/core/scoring.py::score_text (numeric)
+    preprocess: [normalize_chat, strip_text, drop_empty]
+
+  # Explicit HTTP(S) URL that returns JSON or JSONL; the web loader does not crawl.
+  web_math:
+    loader: web
+    url: https://example.com/math.jsonl
+    abilities: {math.reasoning: 0.5}
+    reward: {type: rule, name: numeric, weight: 1.0}
+    reward_code: src/rsi/core/scoring.py::score_text (numeric)
+    preprocess: [normalize_chat, strip_text, drop_empty]

@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any
+from typing import Any, Callable
 
 _NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 _SPACE_RE = re.compile(r"\s+")
+#: Adapters register external scorers (e.g. verl reward functions) here.
+_SCORERS: dict[str, Callable[[str, str | None, dict[str, Any]], float]] = {}
+
+
+def register_scorer(name: str, fn: Callable[[str, str | None, dict[str, Any]], float]) -> None:
+    """Register ``fn(prediction, reference, metadata) -> float`` under ``name``."""
+    _SCORERS[name] = fn
 
 
 def pass_at_k(n: int, c: int, k: int) -> float:
@@ -47,4 +54,6 @@ def score_text(
             return 1.0 if abs(float(target[-1]) - float(predicted[-1])) <= tolerance else 0.0
         except ValueError:
             return 0.0
+    if scorer in _SCORERS:
+        return float(_SCORERS[scorer](prediction, reference, metadata))
     raise ValueError(f"Unknown scorer {scorer!r}")

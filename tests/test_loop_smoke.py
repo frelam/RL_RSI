@@ -12,10 +12,22 @@ from rsi.core.jsonio import read_json
 from tests.helpers import REPO_ROOT
 
 
+def _write_config(td: str, name: str, extra: str) -> Path:
+    """A config that extends configs/default.yaml (absolute include)."""
+    path = Path(td) / name
+    path.write_text(f"include: [{(REPO_ROOT / 'configs' / 'default.yaml').as_posix()}]\n{extra}", encoding="utf-8")
+    return path
+
+
 class LoopSmokeTests(unittest.TestCase):
     def test_demo_loop_reaches_target_and_writes_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            config = REPO_ROOT / "configs" / "demo_mock.yaml"
+            config = _write_config(
+                td,
+                "short.yaml",
+                "run:\n  id: smoke\nstop:\n  policies:\n    - {type: target_score, target: 0.60, min_rounds: 1}\n"
+                "    - {type: max_rounds, max_rounds: 3}\n",
+            )
             stdout, stderr = io.StringIO(), io.StringIO()
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 code = main(
@@ -79,6 +91,33 @@ class LoopSmokeTests(unittest.TestCase):
                 if checkpoint["status"] in {"current", "archived"}
             ]
             self.assertEqual(max(versions), state["round"])
+
+
+    def test_judged_defect_pulls_training_rows_from_the_dataset_library(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            config = _write_config(
+                td,
+                "dataset.yaml",
+                "stop:\n  policies:\n    - {type: max_rounds, max_rounds: 1}\n"
+                "llm:\n  profiles:\n    judge:\n      fixtures:\n        badcase_analysis:\n"
+                "          defects:\n"
+                "            - {capability: math.reasoning, severity: 0.55, confidence: 0.8,\n"
+                "               description: slips on final arithmetic, evidence: ['scored 0.0-0.25'],\n"
+                "               suggested_data: {kind: dataset, seeds: [word problems], target_difficulty: [0.35, 0.8]}}\n",
+            )
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "dataset-demo",
+                     "--runs-dir", td, "--quiet"]
+                )
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            state = read_json(Path(td) / "dataset-demo" / "state.json")
+            self.assertEqual(state["round"], 1)
+            first = state["history"][0]
+            self.assertTrue(first["validation"]["accepted"])
+            manifest = read_json(Path(first["synthesize"]["dataset_path"]) / "manifest.json")
+            self.assertGreater(manifest["stats"]["sources"].get("dataset:math_word_problems", 0), 0)
 
 
 if __name__ == "__main__":
