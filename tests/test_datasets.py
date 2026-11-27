@@ -14,6 +14,7 @@ from rsi.modules.datasets import (
     DatasetCatalog,
     DatasetSpec,
     fetch_dataset_rows,
+    fill_dataset_quotas,
     merge_ability_priorities,
     preprocess_row,
     rows_to_samples,
@@ -117,6 +118,34 @@ class DatasetTests(unittest.TestCase):
         self.assertAlmostEqual(merged["math"], 0.56)
         self.assertEqual(merged["code"], 0.5)
         self.assertEqual(merged["tool"], 1.0)
+
+    def test_shortfall_is_filled_from_the_spare_rows_of_the_other_datasets(self) -> None:
+        big = DatasetSpec("big", "synthetic", abilities={"math": 1.0}, priority=1.0,
+                          rows=[{"question": f"q{i}", "answer": "a"} for i in range(10)])
+        small = DatasetSpec("small", "synthetic", abilities={"math": 1.0}, priority=0.5,
+                            rows=[{"question": "s", "answer": "a"}])
+        request = DataRequest("r", "math", "dataset", 8)
+        # The quotas ask for 6 and 2, but `small` holds a single row.
+        quotas = {"big": 6, "small": 2}
+        usable = {spec.name: rows_to_samples(spec, spec.rows, request, len(spec.rows))
+                  for spec in (big, small)}
+        samples, counts = fill_dataset_quotas(
+            [(spec, usable[spec.name]) for spec in (big, small)], 8, quotas
+        )
+        self.assertEqual(len(samples), 8)
+        self.assertEqual(counts, {"big": 7, "small": 1})
+
+    def test_a_dataset_with_zero_quota_still_lends_its_rows(self) -> None:
+        only = DatasetSpec("only", "synthetic", abilities={"math": 1.0}, priority=0.0,
+                           rows=[{"question": f"q{i}", "answer": "a"} for i in range(3)])
+        request = DataRequest("r", "math", "dataset", 3)
+        selection = select_datasets([only], {"math": 1.0}, 1)
+        self.assertEqual(selection.ratios, {})
+        samples, counts = fill_dataset_quotas(
+            [(only, rows_to_samples(only, only.rows, request, 3))], 3, selection.ratios
+        )
+        self.assertEqual(len(samples), 3)
+        self.assertEqual(counts, {"only": 3})
 
 
 if __name__ == "__main__":

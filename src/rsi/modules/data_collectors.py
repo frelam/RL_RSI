@@ -17,7 +17,13 @@ from rsi.core.types import (
     HarnessTask,
     LLMRequest,
 )
-from rsi.modules.datasets import DatasetCatalog, fetch_dataset_rows, rows_to_samples
+from rsi.modules.datasets import (
+    DatasetCatalog,
+    DatasetSpec,
+    fetch_dataset_rows,
+    fill_dataset_quotas,
+    rows_to_samples,
+)
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 
@@ -435,17 +441,15 @@ class DatasetLibraryCollector(DataCollector):
             self.logger.info("no dataset catalog entries cover %s", request.capability)
             return []
         quotas = _dataset_quotas(selection.ratios, request.count)
-        samples: list[DataSample] = []
-        source_stats: dict[str, int] = {}
+        sources: list[tuple[DatasetSpec, list[DataSample]]] = []
         for dataset in selection.datasets:
             try:
                 rows = fetch_dataset_rows(dataset, self.runtime.repo_root)
-                selected = rows_to_samples(dataset, rows, request, quotas.get(dataset.name, 0))
             except Exception as exc:  # noqa: BLE001 - other sources may still serve the request
                 self.logger.warning("dataset %s failed: %s", dataset.name, exc)
                 continue
-            source_stats[dataset.name] = len(selected)
-            samples.extend(selected)
+            sources.append((dataset, rows_to_samples(dataset, rows, request, len(rows))))
+        samples, source_stats = fill_dataset_quotas(sources, request.count, quotas)
         samples.sort(key=lambda sample: (sample.metadata.get("dataset", ""), sample.id))
         samples = samples[: request.count]
         for sample in samples:

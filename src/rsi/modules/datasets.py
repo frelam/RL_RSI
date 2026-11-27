@@ -294,3 +294,33 @@ def rows_to_samples(
         if len(samples) >= limit:
             break
     return samples
+
+
+def fill_dataset_quotas(
+    sources: list[tuple[DatasetSpec, list[DataSample]]], request_count: int, quotas: dict[str, int]
+) -> tuple[list[DataSample], dict[str, int]]:
+    """Take each dataset's quota, then fill a shortfall from the rows the datasets have left.
+
+    ``sources`` holds each selected dataset with all of its usable samples, in selection
+    order. A dataset that yields less than its quota leaves a gap; the gap is filled from
+    the spare rows of the other datasets, best-contributing source first.
+    """
+    chosen: list[DataSample] = []
+    counts: dict[str, int] = {}
+    spare: list[tuple[str, list[DataSample]]] = []
+    for spec, usable in sources:
+        quota = quotas.get(spec.name, 0)
+        taken = usable[:quota]
+        chosen.extend(taken)
+        counts[spec.name] = len(taken)
+        if len(usable) > quota:
+            spare.append((spec.name, usable[quota:]))
+    deficit = request_count - len(chosen)
+    for name, rest in spare:
+        if deficit <= 0:
+            break
+        extra = rest[:deficit]
+        chosen.extend(extra)
+        counts[name] += len(extra)
+        deficit -= len(extra)
+    return chosen, counts
