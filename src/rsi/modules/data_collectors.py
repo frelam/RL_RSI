@@ -436,7 +436,9 @@ class DatasetLibraryCollector(DataCollector):
 
     def collect(self, request: DataRequest, context: Any) -> list[DataSample]:
         priority = self.runtime.catalog.priority(request.capability)
-        selection = self.catalog.select({request.capability: priority}, self.max_datasets)
+        selection = self.catalog.select(
+            {request.capability: priority}, request.count, max_datasets=self.max_datasets
+        )
         if not selection.datasets:
             self.logger.info("no dataset catalog entries cover %s", request.capability)
             return []
@@ -457,6 +459,7 @@ class DatasetLibraryCollector(DataCollector):
                 "ratios": selection.ratios,
                 "uncovered": selection.uncovered,
                 "source_counts": source_stats,
+                "optimization": selection.stats,
             }
         return samples
 

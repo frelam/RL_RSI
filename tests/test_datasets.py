@@ -24,16 +24,73 @@ from tests.helpers import REPO_ROOT
 
 
 class DatasetTests(unittest.TestCase):
-    def test_greedy_selection_covers_high_priority_abilities(self) -> None:
+    def test_optimizer_matches_target_distribution_within_dataset_limit(self) -> None:
         datasets = [
             DatasetSpec("math", "synthetic", abilities={"math": 1.0}, priority=1.0),
             DatasetSpec("code", "synthetic", abilities={"code": 1.0}, priority=0.8),
             DatasetSpec("general", "synthetic", abilities={"math": 0.5, "code": 0.5}, priority=0.7),
         ]
-        selection = select_datasets(datasets, {"math": 1.0, "code": 0.8}, 2)
+        selection = select_datasets(
+            datasets, {"math": 1.0, "code": 0.8}, 100, max_datasets=2
+        )
         self.assertEqual({item.name for item in selection.datasets}, {"math", "code"})
         self.assertAlmostEqual(sum(selection.ratios.values()), 1.0)
+        self.assertAlmostEqual(selection.ratios["math"], 1.0 / 1.8)
+        self.assertAlmostEqual(selection.ratios["code"], 0.8 / 1.8)
         self.assertEqual(selection.uncovered, [])
+
+    def test_optimizer_accounts_for_overlapping_abilities(self) -> None:
+        datasets = [
+            DatasetSpec("head", "synthetic", abilities={"head": 1.0}, priority=1.0),
+            DatasetSpec("mixed", "synthetic", abilities={"head": 0.5, "tail": 0.5}, priority=1.0),
+        ]
+
+        selection = select_datasets(datasets, {"head": 0.8, "tail": 0.2}, 100)
+
+        self.assertAlmostEqual(selection.ratios["head"], 0.6)
+        self.assertAlmostEqual(selection.ratios["mixed"], 0.4)
+        self.assertAlmostEqual(selection.stats["actual_distribution"]["head"], 0.8)
+        self.assertAlmostEqual(selection.stats["actual_distribution"]["tail"], 0.2)
+
+    def test_sparse_target_penalizes_aggregate_unspecified_coverage(self) -> None:
+        unspecified = {f"extra_{index}": 0.001 for index in range(900)}
+        datasets = [
+            DatasetSpec("focused", "synthetic", abilities={"target": 1.0}, priority=0.5),
+            DatasetSpec(
+                "diluted", "synthetic", abilities={"target": 0.1, **unspecified}, priority=1.0
+            ),
+        ]
+
+        selection = select_datasets(datasets, {"target": 1.0}, 100)
+
+        self.assertEqual([item.name for item in selection.datasets], ["focused"])
+        self.assertEqual(selection.stats["actual_distribution"]["target"], 1.0)
+        self.assertEqual(selection.stats["actual_distribution"]["__other__"], 0.0)
+        self.assertEqual(selection.uncovered, [])
+
+    def test_longtail_shortfall_is_protected_before_head_coverage(self) -> None:
+        datasets = [
+            DatasetSpec("head", "synthetic", abilities={"head": 1.0}, priority=1.0),
+            DatasetSpec("rare", "synthetic", abilities={"rare": 1.0}, priority=0.1),
+        ]
+
+        selection = select_datasets(
+            datasets, {"head": 0.99, "rare": 0.01}, 100, max_datasets=1
+        )
+
+        self.assertEqual([item.name for item in selection.datasets], ["rare"])
+        self.assertEqual(selection.stats["longtail_capabilities"], ["rare"])
+        self.assertEqual(selection.stats["shortfall"]["rare"], 0.0)
+        self.assertEqual(selection.stats["longtail_max_relative_shortfall"], 0.0)
+
+    def test_uncoverable_target_is_reported(self) -> None:
+        datasets = [DatasetSpec("math", "synthetic", abilities={"math": 1.0})]
+
+        selection = select_datasets(datasets, {"math": 0.9, "logic": 0.1}, 100)
+
+        self.assertEqual(selection.uncovered, ["logic"])
+        self.assertEqual(selection.stats["actual_distribution"]["logic"], 0.0)
+        self.assertAlmostEqual(selection.stats["shortfall"]["logic"], 0.1)
 
     def test_catalog_accepts_list_coverage_and_task_request_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -139,10 +196,8 @@ class DatasetTests(unittest.TestCase):
         only = DatasetSpec("only", "synthetic", abilities={"math": 1.0}, priority=0.0,
                            rows=[{"question": f"q{i}", "answer": "a"} for i in range(3)])
         request = DataRequest("r", "math", "dataset", 3)
-        selection = select_datasets([only], {"math": 1.0}, 1)
-        self.assertEqual(selection.ratios, {})
         samples, counts = fill_dataset_quotas(
-            [(only, rows_to_samples(only, only.rows, request, 3))], 3, selection.ratios
+            [(only, rows_to_samples(only, only.rows, request, 3))], 3, {}
         )
         self.assertEqual(len(samples), 3)
         self.assertEqual(counts, {"only": 3})

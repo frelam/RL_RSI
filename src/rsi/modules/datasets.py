@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import yaml
+from scipy.optimize import Bounds, LinearConstraint, milp
 
 from rsi.adapters.verl_agentic_rl import agentic_row_to_row, is_agentic_row
 from rsi.adapters.verl_reasoning_rl import is_verl_row, verl_row_to_row
@@ -47,6 +49,7 @@ class DatasetSelection:
     datasets: list[DatasetSpec]
     ratios: dict[str, float]
     uncovered: list[str]
+    stats: dict[str, Any] = field(default_factory=dict)
 
 
 class DatasetCatalog:
@@ -99,8 +102,17 @@ class DatasetCatalog:
                 )
             )
 
-    def select(self, priorities: dict[str, float], count: int) -> DatasetSelection:
-        return select_datasets(self.datasets, priorities, count)
+    def select(
+        self,
+        priorities: dict[str, float],
+        count: int,
+        *,
+        max_datasets: int | None = None,
+        **options: Any,
+    ) -> DatasetSelection:
+        return select_datasets(
+            self.datasets, priorities, count, max_datasets=max_datasets, **options
+        )
 
 
 #: Loaders that read the rows from `path`.
@@ -118,37 +130,205 @@ def _unit(value: Any, name: str) -> float:
 
 
 def select_datasets(
-    datasets: list[DatasetSpec], priorities: dict[str, float], count: int
+    datasets: list[DatasetSpec],
+    priorities: dict[str, float],
+    count: int,
+    *,
+    max_datasets: int | None = None,
+    under_weight: float = 4.0,
+    over_weight: float = 1.0,
+    other_over_weight: float = 1.0,
+    longtail_threshold: float = 0.1,
+    longtail_under_weight: float = 8.0,
+    dataset_cost_weight: float = 0.01,
+    longtail_tolerance: float = 1e-6,
 ) -> DatasetSelection:
-    """Greedily maximize uncovered ability priority, then derive mix ratios."""
-    remaining = {key: _unit(value, f"priority.{key}") for key, value in priorities.items()}
+    """Fit dataset proportions to a target ability distribution with LP/MILP.
+
+    Coverage scores estimate each dataset's composition over the requested
+    abilities plus one aggregate ``__other__`` dimension for all unrequested
+    abilities. The first stage minimizes the worst relative long-tail shortfall.
+    The second minimizes asymmetric relative L1 error, with larger penalties for
+    under-covering long-tail abilities and for displacing targets with ``__other__``.
+    ``count`` is the required sample total; ``max_datasets`` adds binary variables.
+    """
+    if count < 0:
+        raise ValueError("dataset sample count must be non-negative")
+    if max_datasets is not None and max_datasets <= 0:
+        raise ValueError("max_datasets must be positive")
+    weights = (under_weight, over_weight, other_over_weight, longtail_under_weight, dataset_cost_weight)
+    if not all(math.isfinite(value) and value >= 0 for value in weights):
+        raise ValueError("dataset selection weights must be finite and non-negative")
+    if under_weight == 0 or longtail_under_weight < 1:
+        raise ValueError("under_weight must be positive and longtail_under_weight must be at least 1")
+    if not 0 <= longtail_threshold <= 1:
+        raise ValueError("longtail_threshold must be within [0, 1]")
+    if not math.isfinite(longtail_tolerance) or longtail_tolerance < 0:
+        raise ValueError("longtail_tolerance must be finite and non-negative")
+
+    requested = {
+        key: value
+        for key, value in (
+            (key, _unit(value, f"priority.{key}")) for key, value in priorities.items()
+        )
+        if value > 0
+    }
     # A file-backed dataset without local rows is declared only; it cannot serve a request.
-    candidates = [item for item in datasets if item.path or item.loader not in _FILE_LOADERS]
-    selected: list[DatasetSpec] = []
-    contribution: dict[str, float] = {}
-    while candidates and remaining and len(selected) < max(0, count):
-        ranked = []
-        for dataset in candidates:
-            gain = sum(priority * dataset.abilities.get(ability, 0.0) for ability, priority in remaining.items())
-            ranked.append((gain * dataset.priority, gain, dataset.name, dataset))
-        _, gain, _, winner = max(ranked, key=lambda item: item[:3])
-        if gain <= 0:
-            break
-        selected.append(winner)
-        contribution[winner.name] = gain * winner.priority
-        candidates.remove(winner)
-        remaining = {
-            ability: priority * (1.0 - winner.abilities.get(ability, 0.0))
-            for ability, priority in remaining.items()
-            if priority * (1.0 - winner.abilities.get(ability, 0.0)) > 1e-9
+    available = [item for item in datasets if item.path or item.loader not in _FILE_LOADERS]
+    candidates = [
+        item for item in available if any(item.abilities.get(ability, 0.0) > 0 for ability in requested)
+    ]
+    if count == 0 or not requested or not candidates:
+        return DatasetSelection(
+            datasets=[],
+            ratios={},
+            uncovered=sorted(requested),
+            stats={
+                "target_distribution": _normalized_shares(requested),
+                "actual_distribution": dict.fromkeys(requested, 0.0),
+                "composition_estimated_from_coverage": True,
+            },
+        )
+
+    capabilities = sorted(requested) + ["__other__"]
+    target = np.array([requested[name] for name in capabilities[:-1]] + [0.0], dtype=float)
+    target /= target.sum()
+    coverage = np.zeros((len(candidates), len(capabilities)))
+    for dataset_index, item in enumerate(candidates):
+        total_coverage = sum(item.abilities.values())
+        for capability_index, name in enumerate(capabilities[:-1]):
+            coverage[dataset_index, capability_index] = item.abilities.get(name, 0.0) / total_coverage
+        coverage[dataset_index, -1] = max(0.0, 1.0 - coverage[dataset_index, :-1].sum())
+    is_longtail = (target > 0) & (target <= longtail_threshold)
+    scales = np.maximum(count * target, 1.0)
+    scales[-1] = float(count)
+
+    dataset_count = len(candidates)
+    capability_count = len(capabilities)
+    z_index = dataset_count + 2 * capability_count
+    binary_start = z_index + 1
+    use_binaries = max_datasets is not None and max_datasets < dataset_count
+    variable_count = binary_start + (dataset_count if use_binaries else 0)
+
+    rows: list[np.ndarray] = []
+    lower: list[float] = []
+    upper: list[float] = []
+
+    def add_constraint(coefficients: dict[int, float], low: float, high: float) -> None:
+        row = np.zeros(variable_count)
+        for index, value in coefficients.items():
+            row[index] = value
+        rows.append(row)
+        lower.append(low)
+        upper.append(high)
+
+    add_constraint(dict(enumerate(np.ones(dataset_count))), count, count)
+    for capability_index in range(capability_count):
+        coefficients = {
+            dataset_index: coverage[dataset_index, capability_index]
+            for dataset_index in range(dataset_count)
         }
-    total = sum(contribution.values())
-    ratios = {name: value / total for name, value in contribution.items()} if total else {}
+        coefficients[dataset_count + capability_index] = 1.0
+        coefficients[dataset_count + capability_count + capability_index] = -1.0
+        add_constraint(coefficients, count * target[capability_index], count * target[capability_index])
+    for capability_index in np.flatnonzero(is_longtail):
+        add_constraint(
+            {
+                dataset_count + int(capability_index): 1.0 / scales[capability_index],
+                z_index: -1.0,
+            },
+            -np.inf,
+            0.0,
+        )
+    if use_binaries:
+        for dataset_index in range(dataset_count):
+            add_constraint(
+                {dataset_index: 1.0, binary_start + dataset_index: -float(count)}, -np.inf, 0.0
+            )
+        add_constraint(
+            {binary_start + index: 1.0 for index in range(dataset_count)},
+            -np.inf,
+            float(max_datasets),
+        )
+
+    constraints = LinearConstraint(np.vstack(rows), np.array(lower), np.array(upper))
+    variable_lower = np.zeros(variable_count)
+    variable_upper = np.full(variable_count, np.inf)
+    variable_upper[:dataset_count] = count
+    if use_binaries:
+        variable_upper[binary_start:] = 1.0
+    bounds = Bounds(variable_lower, variable_upper)
+    integrality = np.zeros(variable_count, dtype=int)
+    if use_binaries:
+        integrality[binary_start:] = 1
+
+    tail_limit = 0.0
+    if is_longtail.any():
+        stage_one_objective = np.zeros(variable_count)
+        stage_one_objective[z_index] = 1.0
+        stage_one = milp(
+            stage_one_objective, integrality=integrality, bounds=bounds, constraints=constraints
+        )
+        if not stage_one.success:
+            raise RuntimeError(f"long-tail dataset optimization failed: {stage_one.message}")
+        tail_limit = float(stage_one.x[z_index]) + longtail_tolerance
+
+    stage_two_bounds = Bounds(variable_lower, variable_upper.copy())
+    stage_two_bounds.ub[z_index] = tail_limit
+    objective = np.zeros(variable_count)
+    objective[:dataset_count] = np.array(
+        [dataset_cost_weight * (1.0 - item.priority) / count for item in candidates]
+    )
+    for capability_index in range(capability_count):
+        tail_multiplier = longtail_under_weight if is_longtail[capability_index] else 1.0
+        objective[dataset_count + capability_index] = (
+            under_weight * tail_multiplier / scales[capability_index]
+        )
+        excess_weight = other_over_weight if capability_index == capability_count - 1 else over_weight
+        objective[dataset_count + capability_count + capability_index] = (
+            excess_weight / scales[capability_index]
+        )
+    result = milp(objective, integrality=integrality, bounds=stage_two_bounds, constraints=constraints)
+    if not result.success:
+        raise RuntimeError(f"dataset mixture optimization failed: {result.message}")
+
+    ratios = {
+        item.name: max(0.0, float(result.x[index]) / count)
+        for index, item in enumerate(candidates)
+        if result.x[index] > 1e-8
+    }
+    ratio_vector = np.array([max(0.0, result.x[index]) / count for index in range(dataset_count)])
+    actual_vector = ratio_vector @ coverage
+    actual = {name: float(actual_vector[index]) for index, name in enumerate(capabilities)}
+    shortfall = np.maximum(target - actual_vector, 0.0)
+    excess = np.maximum(actual_vector - target, 0.0)
+    selected = [item for index, item in enumerate(candidates) if ratio_vector[index] > 1e-8]
     return DatasetSelection(
         datasets=selected,
         ratios=ratios,
-        uncovered=sorted(ability for ability, priority in remaining.items() if priority > 1e-6),
+        uncovered=[
+            name for index, name in enumerate(capabilities[:-1]) if actual_vector[index] <= 1e-8
+        ],
+        stats={
+            "solver": "scipy.optimize.milp",
+            "objective": float(result.fun),
+            "sample_total": count,
+            "target_distribution": {name: float(target[index]) for index, name in enumerate(capabilities)},
+            "actual_distribution": actual,
+            "shortfall": {name: float(shortfall[index]) for index, name in enumerate(capabilities)},
+            "excess": {name: float(excess[index]) for index, name in enumerate(capabilities)},
+            "longtail_capabilities": [name for index, name in enumerate(capabilities) if is_longtail[index]],
+            "longtail_max_relative_shortfall": float(
+                max((count * shortfall[index] / scales[index] for index in np.flatnonzero(is_longtail)), default=0.0)
+            ),
+            "composition_estimated_from_coverage": True,
+        },
     )
+
+
+def _normalized_shares(weights: dict[str, float]) -> dict[str, float]:
+    total = sum(weights.values())
+    return {key: value / total for key, value in weights.items()} if total else dict.fromkeys(weights, 0.0)
 
 
 def merge_ability_priorities(

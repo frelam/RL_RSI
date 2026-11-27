@@ -45,14 +45,12 @@ verl-style rows (verl `examples/reasoning_rl`, verl-toolRL `agentic_rl_data`) ar
 
 ## Source selection
 
-For a request, the `dataset_library` collector selects at most `max_datasets` active datasets with a greedy weighted-coverage search:
+The selector normalizes the requested ability priorities into a target distribution and each dataset's coverage scores into an estimated composition. Thousands of unrequested abilities are aggregated into one `__other__` dimension: their individual shares are free, but their aggregate excess is penalized. It then solves a two-stage LP/MILP for the per-source sample ratios:
 
-1. Each ability has a remaining priority. It starts at the catalog priority of the requested capability.
-2. Each candidate's gain is the sum of `remaining priority * coverage` over the remaining abilities. The candidate with the largest `gain * priority` wins.
-3. The winner is selected, and each remaining priority is scaled down by `1 - coverage`.
-4. The search stops when no candidate has a positive gain, or the dataset limit is reached.
+1. Minimize the worst relative shortfall among long-tail abilities (target share at most 0.1).
+2. Subject to that long-tail bound, minimize relative distribution error. Under-coverage costs 4 times over-coverage, and long-tail under-coverage costs another 8 times as much. Dataset readiness is a small tie-breaking cost.
 
-The per-source sample ratio is the winner's contribution divided by the total contribution. Abilities that keep a positive remaining priority are reported as `uncovered`.
+The request count is the required sample total. `max_datasets` is an independent upper bound and introduces binary dataset-selection variables. Abilities with no coverage in the resulting mixture are reported as `uncovered`; the selection stats also record target and actual distributions, shortfalls, excess, and the long-tail diagnostic.
 
 ## From rows to samples
 

@@ -56,11 +56,11 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 ## 2. Determine a new data strategy to fix the model
 - Need some smart algorithm to produce data strategy. 
   e.g.:<br />
-      1.Greedily cover abilities <br />
+      1.Match the target ability distribution with LP/MILP dataset selection <br />
       2.Assign greater data weight to more important and fundamental capabilities.<br />
       3.Ensure that all affected domains have corresponding data coverage.<br />
       4.Ensure that data strategies for other dimensions are not significantly affected.<br />
-  - Sources are chosen and weighted by a greedy weighted-coverage search. See [selection theory](docs/dataset_selection_theory.md).
+  - Sources are weighted by a two-stage LP/MILP that protects long-tail abilities first, then minimizes distribution error while penalizing excess unspecified coverage. See [selection theory](docs/dataset_selection_theory.md).
 - Datasource:<br />
               1. Private datasets (adapters can be defined to specify data retrieval interfaces)<br />
               2. from web<br />

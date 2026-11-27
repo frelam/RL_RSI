@@ -1,54 +1,41 @@
 # Dataset selection theory
 
-The `dataset_library` collector picks registered datasets for a data request and splits the request count between them. This document gives the coverage model behind the selection, the guarantee of the greedy search, and the rounding rules that follow. See [the dataset registry and collector](dataset_library.md) for the fields and loaders.
+The `dataset_library` collector picks registered datasets for a data request and splits the request count between them. This document gives the distribution-matching model and the rounding rules that follow. See [the dataset registry and collector](dataset_library.md) for the fields and loaders.
 
-## Coverage model
+## Coverage and target distributions
 
-Let $A$ be the abilities a request needs, with priority $p_a \ge 0$ for ability $a$. Let dataset $i$ cover ability $a$ with $c_{ia} \in [0,1]$ (`abilities`) and have readiness $q_i \in [0,1]$ (`priority`). The collector is called once per request, and a request carries one capability, so in practice $|A| = 1$ and $p_a$ is the catalog priority of that capability.
-
-Treating $c_{ia}$ as the probability that dataset $i$ trains ability $a$, the priority-weighted coverage of a set $S$ of datasets is
+Let $A$ be the requested abilities, with nonnegative priorities $p_a$, and let dataset $i$ cover ability $a$ with $c_{ia} \in [0,1]$. The target share is $\pi_a = p_a / \sum_b p_b$. Coverage scores are not observed row frequencies, so the selector explicitly estimates each dataset's composition by normalizing its scores over all registered abilities:
 
 $$
-F(S) = \sum_{a \in A} p_a \Bigl(1 - \prod_{i \in S}(1 - c_{ia})\Bigr)
+r_{ia} = \frac{c_{ia}}{\sum_b c_{ib}}.
 $$
 
-$F$ is monotone and submodular. Its marginal gain from adding dataset $i$ is
+The catalog may contain thousands of abilities while a request names only a few. The optimizer therefore keeps only the requested columns and aggregates every unrequested ability into one `__other__` column, with $r_{i,other}=1-\sum_{a\in A}r_{ia}$ and $\pi_{other}=0$. Individual unspecified abilities remain unconstrained, but their aggregate excess is penalized because it displaces the requested distribution. This aggregation keeps the model at $|A|+1$ ability columns rather than expanding the full catalog.
+
+The estimate can be replaced by sample-level ability statistics without changing the optimization model. The collector currently carries one capability per request, but `select_datasets` accepts a joint distribution over multiple abilities.
+
+## Two-stage distribution optimization
+
+For a required sample total $N$, let $x_i \ge 0$ be the planned rows from dataset $i$, with $\sum_i x_i = N$. Using exactly $N$ rows is sufficient because a larger solution can be scaled back to $N$ without changing its distribution. The resulting ability mass is $y_a = \sum_i r_{ia}x_i$. Nonnegative variables $u_a$ and $o_a$ measure shortfall and excess:
 
 $$
-\Delta_i(S) = \sum_{a \in A} p_a \prod_{j \in S}(1 - c_{ja})\, c_{ia}
+y_a + u_a - o_a = N\pi_a.
 $$
 
-The remaining priority that the selector keeps after each pick is $p_a \prod_{j \in S}(1 - c_{ja})$, so the `gain` it computes for a candidate is exactly this marginal gain. An ability is reported as `uncovered` when its remaining priority is still above $10^{-6}$ when the search stops.
+An explicitly requested ability is long-tail when $\pi_a \le 0.1$. Its relative shortfall scale is $s_a = \max(N\pi_a, 1)$; `__other__` is never long-tail and uses $s_{other}=N$. The first LP/MILP minimizes $z$ subject to $u_a/s_a \le z$ for every long-tail ability. This protects the worst long-tail ability before considering the aggregate fit.
 
-## Greedy selection guarantee
-
-The selector repeatedly takes the dataset with the largest $q_i \Delta_i(S)$, for at most $k$ = `max_datasets` picks. With equal readiness this is the standard greedy algorithm for monotone submodular maximization under a cardinality constraint, which returns
+The second stage preserves the optimal $z$ up to a $10^{-6}$ numerical tolerance and minimizes
 
 $$
-F(S_k) \ge \Bigl(1 - \bigl(1 - \tfrac{1}{k}\bigr)^k\Bigr) F(\mathrm{OPT}_k)
+\sum_a \frac{\alpha_a u_a + \beta_a o_a}{s_a}
++ 0.01\sum_i \frac{(1-q_i)x_i}{N},
 $$
 
-For $k = 4$ the factor is $0.6836$, and it approaches $1 - 1/e \approx 0.6321$ from above as $k$ grows.
+where $q_i$ is dataset readiness. By default $\alpha_a=4$ and $\beta_a=1$; for long-tail abilities $\alpha_a=32$. Thus covering a missing long-tail ability is worth substantially more than avoiding excess head data. A small readiness cost resolves otherwise equivalent mixtures.
 
-Readiness scales the score of each candidate, so a dataset with low readiness can lose to one with a smaller gain. Writing $\rho = \min_i q_i / \max_i q_i$ over the candidates, the chosen gain is at least $\rho$ times the best available gain, and the same telescoping argument gives
+`max_datasets` adds a binary variable for each candidate, links its sample variable to that choice, and bounds the number of selected sources. Continuous proportions use LP; this cardinality constraint makes the problem a MILP. Both are solved by HiGHS through `scipy.optimize.milp`.
 
-$$
-F(S_k) \ge \Bigl(1 - \bigl(1 - \tfrac{\rho}{k}\bigr)^k\Bigr) F(\mathrm{OPT}_k)
-$$
-
-The bound degrades as the readiness spread grows. With the default registry values $q \in \{0.3, 0.7, 0.8\}$ and $k = 4$, $\rho = 0.375$ and the factor is $0.3255$. This is a worst-case bound on the coverage objective only. The readiness term is a deliberate preference for rows that are ready to use, and the trade-off is intended when the readiness values differ.
-
-When the search stops because no candidate has a positive gain, every ability is covered as far as the available datasets allow, and $F(S) = F(\mathrm{OPT})$.
-
-## Sample ratios
-
-The ratio of dataset $i$ is its score at the time it was picked, divided by the total score:
-
-$$
-r_i = \frac{q_i \Delta_i(S_{i-1})}{\sum_j q_j \Delta_j(S_{j-1})}
-$$
-
-The ratios sum to one. With equal readiness the unweighted gains telescope, $\sum_i \Delta_i(S_{i-1}) = F(S)$, so $r_i$ is the share of the covered priority that dataset $i$ contributed. Unequal readiness moves share toward datasets with more ready rows.
+A target is exactly feasible without a dataset limit only when its distribution lies in the convex hull of the available dataset composition vectors. Otherwise the optimizer returns the closest solution under the asymmetric loss and reports the remaining shortfall rather than silently changing the target.
 
 ## Integer quotas
 
@@ -85,8 +72,8 @@ rows, capped by `max_samples` and by the rows found in the last `recent_rounds` 
 
 | Option | Default config | Role in the model |
 | --- | --- | --- |
-| `priority` (per dataset) | `0.3` to `0.8` | Readiness $q_i$. Equal values give the $1 - (1-1/k)^k$ guarantee. |
-| `abilities` (per dataset) | `0.3` to `1.0` | Coverage $c_{ia}$. |
-| `max_datasets` | `4` | Number of picks $k$. |
+| `priority` (per dataset) | `0.3` to `0.8` | Readiness $q_i$, used as a small mixture tie-breaking cost. |
+| `abilities` (per dataset) | `0.3` to `1.0` | Coverage scores $c_{ia}$, normalized into estimated composition. |
+| `max_datasets` | `4` | Maximum number of sources in the MILP. |
 | `data.plan.count_per_defect`, `min_count`, `max_count` | `4`, `2`, `6` | Request count before the `task.count` cap. |
 | `data.replay.fraction`, `max_samples`, `recent_rounds` | `0.2`, `128`, `1` | Replay target and its caps. |

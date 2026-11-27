@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A modular, code-driven recursive self-improvement loop for RL post-training."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["PyYAML>=6.0"]
+dependencies = ["PyYAML>=6.0", "SciPy>=1.11"]
 
 [project.scripts]
 rsi = "rsi.cli:main"
