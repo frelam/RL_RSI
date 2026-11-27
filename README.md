@@ -47,24 +47,13 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - Prioritize the missing capabilities based on their foundational nature and importance.
 - deliver missing capabilities map and their priorities.
 
-The shared capability catalog in `configs/capabilities.yaml` defines ability names, priorities, reward/verifier settings, and benchmark mappings. Benchmark adapters may also declare a URL and description. Reports include the capabilities observed in their evaluated items. The optional `trajectory_agent` analyzer estimates task ability priorities from collected traces. The analysis merger combines rule and trajectory estimates using configurable source weights.
+The shared capability catalog in `configs/capabilities.yaml` defines ability names, priorities, reward/verifier settings, and benchmark mappings. The analyzers judge the collected benchmarks from three angles: low scores against a baseline (rule), LLM-judged bad cases, and missing capabilities inferred by comparing scores with same-size open-model references (`missing_capability`). The optional `trajectory_agent` analyzer estimates task ability priorities from collected traces. See [capability analysis](docs/capability_analysis.md) and [the theory behind the analyzers and validation](docs/capability_decision_theory.md).
 
-The optional `missing_capability` analyzer infers missing capabilities from benchmark results:
-
-- `configs/benchmarks.yaml` maps each benchmark to the capabilities it covers.
-- `configs/benchmark_reference.yaml` gives the mean and standard deviation of open-model scores per benchmark, keyed by parameter count. A `benchmark.subset` entry holds the curve of one subset.
-- A report that labels its items with a subset is judged subset by subset; otherwise the benchmark is judged as a whole. A benchmark or subset performs well when its score is within `max(margin, sigma * std)` of the reference at the model size (`params_b`, or `checkpoint.initial.params_b`). Every capability of a well-performing benchmark or subset is marked as present.
-- Each catalog capability that stays unmarked is reported as a missing capability, with severity scaled by its catalog priority. A benchmark or subset without a reference curve is skipped, or judged against `absolute_threshold` when `unreferenced: absolute`. When every collected benchmark is skipped, the analyzer reports no defects.
-
-`data.plan.scope` limits the run to a target capability scope: defects outside it are dropped before planning, and the benchmarks should cover every capability in the scope.
+`data.plan.scope` limits the run to a target capability scope. See [capability scope](docs/capability_analysis.md#capability-scope).
 
 ## Validation
 
-Benchmark validation compares the candidate with its parent on the round's target capabilities and on the other measured capabilities:
-
-- The candidate is accepted when at least one target capability improves, no other capability regresses beyond `max_other_regression`, and the overall metric passes `min_delta`.
-- Targets that did not improve, and targets no benchmark measures, are listed in the result (`failed_targets`, `unmeasured_targets`) and saved as `pending_capabilities` in `state.json`. The next round plans their data first, before other defects.
-- When no target capability improves, the candidate is rejected.
+Validation compares the candidate with its parent on the round's target capabilities and on the other measured capabilities, and decides whether the candidate is promoted. Targets that did not improve are carried to the next round. See [validation](docs/capability_analysis.md#validation) and [validation as a joint test](docs/capability_decision_theory.md#validation-as-a-joint-test).
 
 ## 2. Determine a new data strategy to fix the model
 - Need some smart algorithm to produce data strategy. 
@@ -85,7 +74,7 @@ Benchmark validation compares the candidate with its parent on the round's targe
 - Deliver a new dataset and the desired mix ratio.
 - Enhance the reward associated with the data
 
-Datasets are described in `configs/datasets.yaml` with a source URL or local path, loader, license, ability coverage, source priority, reward metadata, and preprocessing methods. The `dataset_library` collector supports local JSONL, HTTP JSON/JSONL, optional Hugging Face `datasets`, and inline synthetic rows. A greedy weighted-coverage selector chooses sources and derives per-source sample ratios. `DataPipeline.plan_task(TaskSpec(...))` previews a task collection plan, while `collect_task(...)` loads its samples through the same adapters. Dataset samples then use the existing filtering, deduplication, difficulty, mixing, and builder stages.
+Curated datasets are registered in `configs/datasets.yaml`, one entry per dataset, and loaded by the `dataset_library` collector instead of being synthesized. See [the dataset registry and collector](docs/dataset_library.md) and [the selection theory](docs/dataset_selection_theory.md).
 
 ## 3. use RL framework to train by model it-self.(via verl, slime, etc.)
 - Filter the data with difficulty level from data pool.
