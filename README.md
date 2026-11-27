@@ -61,6 +61,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
       3.Ensure that all affected domains have corresponding data coverage.<br />
       4.Ensure that data strategies for other dimensions are not significantly affected.<br />
   - Sources are weighted by a two-stage LP/MILP that protects long-tail abilities first, then minimizes distribution error while penalizing excess unspecified coverage. See [selection theory](docs/dataset_selection_theory.md).
+  - Before selection, the planner builds the round's target distribution from merged analyzer priorities, pending capabilities and the previous round (`data.plan.target_distribution`). See [target distribution pre-processing](docs/dataset_library.md#source-selection).
 - Datasource:<br />
               1. Private datasets (adapters can be defined to specify data retrieval interfaces)<br />
               2. from web<br />
@@ -71,7 +72,7 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
   - Deduplication (using hashing, etc.)
   - Prevent benchmark data leakage
 - Combine recent train.jsonl data with newly sampled data to synthesize a dataset and reduce forgetting. Validation samples are excluded from replay.
-  - The replayed rows make up a fixed share of the new samples. See [replay share](docs/dataset_selection_theory.md#replay-share).
+  - The replayed rows make up a fixed share of the new samples. With `data.replay.strategy: target`, that share is apportioned by the target distribution; `uniform` samples it at random. See [replay share](docs/dataset_selection_theory.md#replay-share).
 - Deliver a new dataset and the desired mix ratio.
 - Enhance the reward associated with the data
 

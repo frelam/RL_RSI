@@ -160,6 +160,7 @@ data:
     fraction: 0.2
     recent_rounds: 1
     max_samples: 128
+    strategy: target          # uniform | target (allocate replay by the target distribution)
   default_collector: text
   plan:
     strategy: rule              # rule | llm
@@ -184,6 +185,12 @@ data:
       # score_floor: 0.6
       # prerequisites:
       #   long_context.retrieval: [instruction.following]
+    # Mock target-distribution pre-processing: merged analyzer priorities plus
+    # pending capabilities, then a convex blend with the previous round's target.
+    target_distribution:
+      enabled: true
+      previous_weight: 0.3      # in [0, 1); 0 disables the previous-round blend
+      pending_priority: 0.25    # floor for capabilities carried over by validation
   collectors:
     text:
       type: text_synthesis

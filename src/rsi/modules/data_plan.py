@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
+from rsi.core.errors import ConfigError
 from rsi.core.interfaces import Component
 from rsi.core.jsonio import stable_hash
 from rsi.core.schema import validate_json
 from rsi.core.types import DataPlan, DataRequest, Defect, DefectReport, TaskSpec
+from rsi.modules.datasets import merge_ability_priorities
 
 
 class DataPlanner(Component):
@@ -28,6 +31,14 @@ class DataPlanner(Component):
         self.fallback_kind = str(self.cfg.get("fallback_kind", "text"))
         self.llm_profile = str(self.cfg.get("profile", runtime.config.get("llm.default_profile", "judge")))
         self.llm_prompt = self.cfg.get("prompt")
+        distribution_cfg = self.cfg.section("target_distribution", required=False)
+        self.target_distribution_enabled = distribution_cfg.get_bool("enabled", True)
+        self.previous_weight = distribution_cfg.get_float("previous_weight", 0.3)
+        self.pending_priority = distribution_cfg.get_float("pending_priority", 0.25)
+        if not math.isfinite(self.previous_weight) or not 0 <= self.previous_weight < 1:
+            raise ConfigError("data.plan.target_distribution.previous_weight must be within [0, 1)")
+        if not math.isfinite(self.pending_priority) or not 0 <= self.pending_priority <= 1:
+            raise ConfigError("data.plan.target_distribution.pending_priority must be within [0, 1]")
         self.curriculum = runtime.build(
             "curriculum",
             self.cfg.plugin("curriculum", "severity"),
@@ -52,17 +63,20 @@ class DataPlanner(Component):
                 notes=f"curriculum '{curriculum.stage}' selected no capabilities",
                 metadata={"curriculum": curriculum.notes, "excluded": curriculum.excluded},
             )
+        distribution, distribution_info = self._target_distribution(candidates, defects, context)
         if self.strategy == "llm" and self.llm_prompt:
             plan = self._llm_plan(candidates, context)
             if plan is not None:
                 plan.metadata["curriculum"] = curriculum.notes
                 plan.metadata["curriculum_stage"] = curriculum.stage
+                self._attach_target_distribution(plan, distribution, distribution_info)
                 return plan
             self.logger.warning("LLM data planning failed; falling back to rule planner")
         plan = self._rule_plan(candidates, context)
         plan.metadata["curriculum"] = curriculum.notes
         plan.metadata["curriculum_stage"] = curriculum.stage
         plan.metadata["curriculum_excluded"] = curriculum.excluded
+        self._attach_target_distribution(plan, distribution, distribution_info)
         return plan
 
     def plan_task(self, task: TaskSpec, context: Any) -> DataPlan:
@@ -106,6 +120,86 @@ class DataPlanner(Component):
         plan.notes = f"{len(plan.requests)} dataset requests for task {task.id}"
         plan.metadata["ability_priorities"] = dict(task.ability_priorities)
         return plan
+
+    def _target_distribution(
+        self, defects: list[Defect], report: DefectReport, context: Any
+    ) -> tuple[dict[str, float], dict[str, Any]]:
+        """Mock pre-processing of the capability target distribution.
+
+        The flow is: merged analyzer priorities + defect fallback + pending
+        capabilities -> optional blend with the previous round -> normalize.
+        Counts and the final matching algorithm can be refined later without
+        changing the data contract (``plan.metadata["target_distribution"]``).
+        """
+        if not self.target_distribution_enabled:
+            return {}, {"enabled": False}
+        merged = report.metadata.get("ability_priorities") or {}
+        current: dict[str, float] = {}
+        for defect in defects:
+            raw = merged.get(defect.capability)
+            if raw is None:
+                raw = defect.severity * defect.confidence
+            try:
+                value = max(0.0, min(1.0, float(raw)))
+            except (TypeError, ValueError):
+                value = max(0.0, min(1.0, defect.severity * defect.confidence))
+            current[defect.capability] = max(current.get(defect.capability, 0.0), value)
+
+        pending = {
+            str(name)
+            for name in getattr(getattr(context, "state", None), "pending_capabilities", None) or []
+        }
+        carried = sorted(pending & set(current))
+        for capability in carried:
+            current[capability] = max(current[capability], self.pending_priority)
+
+        previous = self._previous_distribution(context)
+        previous = {name: value for name, value in previous.items() if name in current}
+        if previous and self.previous_weight > 0:
+            blend = merge_ability_priorities(
+                current, previous,
+                rule_weight=1.0 - self.previous_weight,
+                agent_weight=self.previous_weight,
+            )
+        else:
+            blend = current
+        total = sum(blend.values())
+        if total <= 0:
+            blend = dict.fromkeys(current, 1.0 / len(current)) if current else {}
+            total = sum(blend.values())
+        distribution = {name: value / total for name, value in sorted(blend.items())}
+        info = {
+            "enabled": True,
+            "current": current,
+            "previous": previous,
+            "previous_weight": self.previous_weight,
+            "pending": carried,
+            "sources": ["defects"] + (["previous"] if previous else []),
+        }
+        return distribution, info
+
+    @staticmethod
+    def _previous_distribution(context: Any) -> dict[str, float]:
+        history = getattr(getattr(context, "state", None), "history", None) or []
+        for record in reversed(history):
+            data = record.get("synthesize") or {}
+            raw = data.get("target_distribution")
+            if not isinstance(raw, dict) or not raw:
+                continue
+            return {
+                str(name): max(0.0, min(1.0, float(value)))
+                for name, value in raw.items()
+                if isinstance(value, (int, float)) and math.isfinite(float(value)) and float(value) > 0
+            }
+        return {}
+
+    def _attach_target_distribution(
+        self, plan: DataPlan, distribution: dict[str, float], info: dict[str, Any]
+    ) -> None:
+        plan.metadata["target_distribution"] = distribution
+        plan.metadata["target_distribution_info"] = info
+        for request in plan.requests:
+            request.constraints["target_share"] = distribution.get(request.capability, 0.0)
 
     def _rule_plan(self, defects: list[Defect], context: Any) -> DataPlan:
         requests: list[DataRequest] = []

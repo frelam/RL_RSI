@@ -19,6 +19,7 @@ from rsi.core.types import (
 )
 from rsi.modules.datasets import (
     DatasetCatalog,
+    DatasetSelection,
     DatasetSpec,
     fetch_dataset_rows,
     fill_dataset_quotas,
@@ -436,9 +437,11 @@ class DatasetLibraryCollector(DataCollector):
 
     def collect(self, request: DataRequest, context: Any) -> list[DataSample]:
         priority = self.runtime.catalog.priority(request.capability)
-        selection = self.catalog.select(
-            {request.capability: priority}, request.count, max_datasets=self.max_datasets
-        )
+        selection = self._joint_selection(request, context)
+        if selection is None:
+            selection = self.catalog.select(
+                {request.capability: priority}, request.count, max_datasets=self.max_datasets
+            )
         if not selection.datasets:
             self.logger.info("no dataset catalog entries cover %s", request.capability)
             return []
@@ -462,6 +465,39 @@ class DatasetLibraryCollector(DataCollector):
                 "optimization": selection.stats,
             }
         return samples
+
+    def _joint_selection(self, request: DataRequest, context: Any) -> DatasetSelection | None:
+        """Mock use of the round-level target distribution for source selection."""
+        distribution = getattr(context, "target_distribution", None) or {}
+        plan = getattr(context, "plan", None)
+        if not distribution or plan is None:
+            return None
+        dataset_requests = [item for item in plan.requests if item.kind == request.kind]
+        if len(dataset_requests) <= 1:
+            return None
+        cached = getattr(context, "dataset_selection", None)
+        if cached is None:
+            total = sum(max(0, item.count) for item in dataset_requests)
+            if total <= 0:
+                return None
+            cached = self.catalog.select(distribution, total, max_datasets=self.max_datasets)
+            context.dataset_selection = cached
+        specs = {dataset.name: dataset for dataset in self.catalog.datasets}
+        ratios = {
+            name: ratio
+            for name, ratio in cached.ratios.items()
+            if name in specs and specs[name].abilities.get(request.capability, 0.0) > 0
+        }
+        total_ratio = sum(ratios.values())
+        if total_ratio <= 0:
+            return None
+        ratios = {name: ratio / total_ratio for name, ratio in ratios.items()}
+        return DatasetSelection(
+            datasets=[specs[name] for name in ratios],
+            ratios=ratios,
+            uncovered=list(cached.uncovered),
+            stats={**cached.stats, "joint": True, "request_capability": request.capability},
+        )
 
 
 def _dataset_quotas(ratios: dict[str, float], total: int) -> dict[str, int]:

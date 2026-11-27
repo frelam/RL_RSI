@@ -45,7 +45,9 @@ verl-style rows (verl `examples/reasoning_rl`, verl-toolRL `agentic_rl_data`) ar
 
 ## Source selection
 
-The selector normalizes the requested ability priorities into a target distribution and each dataset's coverage scores into an estimated composition. Thousands of unrequested abilities are aggregated into one `__other__` dimension: their individual shares are free, but their aggregate excess is penalized. It then solves a two-stage LP/MILP for the per-source sample ratios:
+Before a dataset request is served, `DataPlanner` builds the round's target distribution from the merged analyzer priorities (with a defect severity fallback), a floor for `pending_capabilities`, and an optional blend with the previous round's distribution. The result is written to `plan.metadata["target_distribution"]` and to `pipeline.json`. `data.plan.target_distribution` controls the blend weight and the pending floor; setting `enabled: false` skips the pre-processing.
+
+The selector normalizes the requested ability priorities into a target distribution and each dataset's coverage scores into an estimated composition. When the plan has more than one dataset request, the collector runs one joint selection over the plan's `target_distribution`, then keeps the selected sources that cover each request's capability and renormalizes their ratios for that request. A single dataset request uses its own capability priority. Thousands of unrequested abilities are aggregated into one `__other__` dimension: their individual shares are free, but their aggregate excess is penalized. It then solves a two-stage LP/MILP for the per-source sample ratios:
 
 1. Minimize the worst relative shortfall among long-tail abilities (target share at most 0.1).
 2. Subject to that long-tail bound, minimize relative distribution error. Under-coverage costs 4 times over-coverage, and long-tail under-coverage costs another 8 times as much. Dataset readiness is a small tie-breaking cost.

@@ -12,7 +12,7 @@ $$
 
 The catalog may contain thousands of abilities while a request names only a few. The optimizer therefore keeps only the requested columns and aggregates every unrequested ability into one `__other__` column, with $r_{i,other}=1-\sum_{a\in A}r_{ia}$ and $\pi_{other}=0$. Individual unspecified abilities remain unconstrained, but their aggregate excess is penalized because it displaces the requested distribution. This aggregation keeps the model at $|A|+1$ ability columns rather than expanding the full catalog.
 
-The estimate can be replaced by sample-level ability statistics without changing the optimization model. The collector currently carries one capability per request, but `select_datasets` accepts a joint distribution over multiple abilities.
+The estimate can be replaced by sample-level ability statistics without changing the optimization model. When a plan contains several dataset requests, the collector solves one joint selection over the plan's `target_distribution` and reuses those ratios per request, keeping only the selected sources that cover that request's capability. A single dataset request falls back to its own capability priority.
 
 ## Two-stage distribution optimization
 
@@ -68,6 +68,8 @@ $$
 
 rows, capped by `max_samples` and by the rows found in the last `recent_rounds` datasets. Without the cap, replayed rows make up exactly $f$ of the combined set: with $f = 0.2$, one replayed row is added for every four new ones. With $n f/(1-f) > \texttt{max\_samples}$ the share is below $f$ and shrinks as $n$ grows. $f$ must be in $[0, 1)$. Replay rows are deduplicated among themselves by prompt.
 
+`data.replay.strategy` chooses the rows. `uniform` shuffles all candidate rows and takes the target; `target` apportions the replay target across capabilities by the current target distribution, then fills any shortage from the remaining rows. The per-capability targets and the selected counts are recorded in `pipeline.json` and the dataset statistics.
+
 ## Configuration
 
 | Option | Default config | Role in the model |
@@ -77,3 +79,4 @@ rows, capped by `max_samples` and by the rows found in the last `recent_rounds` 
 | `max_datasets` | `4` | Maximum number of sources in the MILP. |
 | `data.plan.count_per_defect`, `min_count`, `max_count` | `4`, `2`, `6` | Request count before the `task.count` cap. |
 | `data.replay.fraction`, `max_samples`, `recent_rounds` | `0.2`, `128`, `1` | Replay target and its caps. |
+| `data.replay.strategy` | `target` | `uniform` shuffle or `target` capability allocation. |

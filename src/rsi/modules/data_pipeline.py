@@ -38,6 +38,8 @@ class DataContext:
     plan: DataPlan | None = None
     rng: Any = None
     history: list[dict[str, Any]] = field(default_factory=list)
+    target_distribution: dict[str, float] = field(default_factory=dict)
+    dataset_selection: Any = None
     mixing_info: dict[str, Any] = field(default_factory=dict)
     mixing_groups: set[str] | None = None
     sampler_stats: dict[str, Any] = field(default_factory=dict)
@@ -58,6 +60,23 @@ class DataPipelineResult:
     sampler_stats: dict[str, Any] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
     stats: dict[str, Any] = field(default_factory=dict)
+
+
+def _capability_counts(samples: list[DataSample]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for sample in samples:
+        counts[sample.capability] = counts.get(sample.capability, 0) + 1
+    return counts
+
+
+def _replay_quotas(shares: dict[str, float], total: int) -> dict[str, int]:
+    exact = {name: share * total for name, share in shares.items()}
+    quotas = {name: int(value) for name, value in exact.items()}
+    remainder = total - sum(quotas.values())
+    order = sorted(shares, key=lambda name: (exact[name] - quotas[name], name), reverse=True)
+    for name in order[: max(0, remainder)]:
+        quotas[name] += 1
+    return quotas
 
 
 class DataPipeline:
@@ -108,8 +127,12 @@ class DataPipeline:
         self.replay_fraction = self.replay_cfg.get_float("fraction", 0.0)
         self.replay_rounds = max(0, self.replay_cfg.get_int("recent_rounds", 1))
         self.max_replay = max(0, self.replay_cfg.get_int("max_samples", 128))
+        self.replay_strategy = str(self.replay_cfg.get("strategy", "uniform"))
         if not math.isfinite(self.replay_fraction) or not 0 <= self.replay_fraction < 1:
             raise ConfigError("data.replay.fraction must be within [0, 1)")
+        if self.replay_strategy not in {"uniform", "target"}:
+            raise ConfigError("data.replay.strategy must be 'uniform' or 'target'")
+        self._last_replay_info: dict[str, Any] = {}
 
     def validate(self) -> None:
         """Check every prompt referenced by collectors, filters and graders."""
@@ -182,6 +205,7 @@ class DataPipeline:
         )
         plan = self.planner.plan(defects, context)
         context.plan = plan
+        context.target_distribution = dict(plan.metadata.get("target_distribution") or {})
         plan.metadata.update(
             attempt=attempt,
             difficulty_shift=difficulty_shift,
@@ -249,7 +273,13 @@ class DataPipeline:
             generated_per_request[request.id] = len(produced)
             new_samples.extend(produced)
         new_samples = new_samples[: self.max_generated]
-        replay_samples = self._load_replay(context.history, len(new_samples), round_no)
+        replay_samples = self._load_replay(
+            context.history,
+            len(new_samples),
+            round_no,
+            target_distribution=context.target_distribution,
+        )
+        replay_info = dict(self._last_replay_info)
         plan.metadata["replayed"] = len(replay_samples)
         samples = replay_samples + new_samples
         if self.save_intermediate:
@@ -273,6 +303,12 @@ class DataPipeline:
             write_jsonl(work_dir / "filtered.jsonl", kept)
             write_jsonl(work_dir / "selected.jsonl", selected)
         dataset = self.builder.build(selected, context, plan, weights)
+        merge_info = {
+            "target_distribution": context.target_distribution,
+            "new_by_capability": _capability_counts(new_samples),
+            "replay_by_capability": _capability_counts(replay_samples),
+            "selected_by_capability": _capability_counts(selected),
+        }
         if dataset is not None:
             dataset.mixing = weights
             dataset.stats.update(
@@ -282,6 +318,8 @@ class DataPipeline:
                     "filter": filter_stats,
                     "generated_per_request": generated_per_request,
                     "errors": errors,
+                    "replay": replay_info,
+                    "merge": merge_info,
                 }
             )
         result = DataPipelineResult(
@@ -305,6 +343,9 @@ class DataPipeline:
                 "filtered": len(kept),
                 "selected": len(selected),
                 "dataset_id": dataset.dataset_id if dataset else None,
+                "target_distribution": context.target_distribution,
+                "replay": replay_info,
+                "merge": merge_info,
             },
         )
         atomic_write_json(work_dir / "pipeline.json", result)
@@ -315,8 +356,13 @@ class DataPipeline:
         return result
 
     def _load_replay(
-        self, history: list[dict[str, Any]], new_count: int, round_no: int
+        self,
+        history: list[dict[str, Any]],
+        new_count: int,
+        round_no: int,
+        target_distribution: dict[str, float] | None = None,
     ) -> list[DataSample]:
+        self._last_replay_info = {}
         if (
             not self.replay_cfg.get_bool("enabled", False)
             or self.replay_fraction <= 0
@@ -327,11 +373,11 @@ class DataPipeline:
         target = min(target, self.max_replay)
         if target <= 0:
             return []
-        replay: list[DataSample] = []
+        candidates: list[DataSample] = []
         seen: set[str] = set()
         used_rounds = 0
         for record in reversed(history):
-            if used_rounds >= self.replay_rounds or len(replay) >= target:
+            if used_rounds >= self.replay_rounds:
                 break
             dataset_path = (record.get("synthesize") or {}).get("dataset_path")
             if not dataset_path:
@@ -347,11 +393,65 @@ class DataPipeline:
                 key = stable_hash(sample.prompt)
                 if key not in seen:
                     seen.add(key)
-                    replay.append(sample)
+                    candidates.append(sample)
             used_rounds += 1
 
-        replay.sort(key=lambda sample: stable_hash(self.runtime.seed, round_no, "replay", sample.id))
-        return replay[:target]
+        strategy = getattr(self, "replay_strategy", "uniform")
+        distribution = {
+            str(name): float(value)
+            for name, value in (target_distribution or {}).items()
+            if isinstance(value, (int, float)) and float(value) > 0
+        }
+        quotas: dict[str, int] = {}
+        if strategy == "target" and distribution and candidates:
+            replay, quotas = self._target_replay(candidates, distribution, target, round_no)
+            used_strategy = "target"
+        else:
+            replay = sorted(
+                candidates, key=lambda sample: stable_hash(self.runtime.seed, round_no, "replay", sample.id)
+            )[:target]
+            used_strategy = "uniform"
+        self._last_replay_info = {
+            "strategy": used_strategy,
+            "target": target,
+            "loaded": len(candidates),
+            "selected": len(replay),
+            "by_capability": _capability_counts(replay),
+            "target_by_capability": quotas,
+            "rounds": used_rounds,
+        }
+        return replay
+
+    def _target_replay(
+        self,
+        candidates: list[DataSample],
+        distribution: dict[str, float],
+        target: int,
+        round_no: int,
+    ) -> tuple[list[DataSample], dict[str, int]]:
+        """Mock merge: allocate the replay budget by the target distribution."""
+        by_capability: dict[str, list[DataSample]] = {}
+        for sample in candidates:
+            by_capability.setdefault(sample.capability, []).append(sample)
+        shares = {name: distribution.get(name, 0.0) for name in by_capability}
+        total = sum(shares.values())
+        if total <= 0:
+            return [], {}
+        shares = {name: value / total for name, value in shares.items()}
+        quotas = _replay_quotas(shares, target)
+        order = lambda sample: stable_hash(self.runtime.seed, round_no, "replay", sample.id)
+        replay: list[DataSample] = []
+        for capability in sorted(by_capability):
+            replay.extend(sorted(by_capability[capability], key=order)[: quotas.get(capability, 0)])
+        limit = min(target, len(candidates))
+        if len(replay) < limit:
+            taken = {sample.id for sample in replay}
+            leftovers = sorted(
+                (sample for sample in candidates if sample.id not in taken), key=order
+            )
+            replay.extend(leftovers[: limit - len(replay)])
+        replay.sort(key=order)
+        return replay[:target], quotas
 
     def _sample_from_replay_row(
         self, row: dict[str, Any], source_round: int
