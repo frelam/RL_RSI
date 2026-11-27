@@ -34,6 +34,7 @@ checkpoint:
   initial:
     model_path: "mock://base-model"
     base_model: "mock-base"
+    # params_b: 7              # model size in billions, read by the missing_capability analyzer
   keep_all: true
 
 # --------------------------------------------------------------------- inference
@@ -120,6 +121,17 @@ analyze:
     #   prompt: trajectory_ability_analysis
     #   profile: judge
     #   max_trajectories: 12
+    # Enable to infer missing capabilities: capabilities of benchmarks that score
+    # close to the same-size average (configs/benchmark_reference.yaml) are marked,
+    # and every unmarked catalog capability becomes a defect.
+    # - type: missing_capability
+    #   name: missing
+    #   registry: configs/benchmarks.yaml
+    #   reference: configs/benchmark_reference.yaml
+    #   margin: 0.05              # good if score >= reference - max(margin, sigma * std)
+    #   sigma: 0.0               # widen the tolerance by this many reference std
+    #   unreferenced: skip        # skip | absolute (judge by absolute_threshold)
+    #   severity: 0.6             # scaled by the catalog priority of each capability
     # Optional agentic deep-dive (advisory, schema-gated):
     # - type: harness
     #   name: harness
@@ -155,6 +167,9 @@ data:
     min_count: 2
     max_count: 6
     max_requests: 8
+    # Target capability scope of this run: defects outside it are dropped before planning.
+    # The benchmarks should cover every capability listed here. Empty => no restriction.
+    scope: []
     min_severity: 0.05
     target_difficulty: [0.2, 0.9]
     prompt: data_plan

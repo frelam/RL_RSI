@@ -132,6 +132,39 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(result["accepted"])
         self.assertEqual(result["reason"], "benchmark coverage or results are incomplete")
 
+    def test_partial_improvement_is_accepted_and_carried_to_the_next_round(self) -> None:
+        class TwoTargets:
+            def evaluate(self, checkpoint, round_no):
+                target = 0.7 if checkpoint.id == "candidate" else 0.5
+                return BenchmarkReport(
+                    benchmark="suite", checkpoint_id=checkpoint.id, round=round_no,
+                    items=[
+                        ItemResult("target-1", "target", score=target, passed=True),
+                        ItemResult("lag-1", "lag", score=0.5, passed=True),
+                    ],
+                )
+
+        self.runtime.benchmark = lambda name: TwoTargets()
+        self.context.memory["collect"] = SimpleNamespace(reports=[TwoTargets().evaluate(self.incumbent, 0)])
+        self.context.memory["data"].plan.requests.append(
+            DataRequest(id="r2", capability="lag", kind="text", count=2)
+        )
+        self.context.state = SimpleNamespace(pending_capabilities=["older"])
+        self.runtime.checkpoints = SimpleNamespace(update_metrics=lambda *args, **kwargs: None)
+        result = self.stage.evaluate(self.context, self.candidate)
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["improved_targets"], ["target"])
+        self.assertEqual(result["failed_targets"], ["lag"])
+        self.assertIn("carried to the next round: lag", result["reason"])
+        self.stage.record(self.context, self.candidate, result, "validation")
+        self.assertEqual(self.context.state.pending_capabilities, ["lag", "older"])
+        self.context.memory["data"].plan.requests.append(
+            DataRequest(id="r3", capability="flat", kind="text", count=2)
+        )
+        result = self.stage.evaluate(self.context, self.candidate)
+        self.assertTrue(result["accepted"])  # "flat" is not measured: reported, not a failure
+        self.assertEqual(result["unmeasured_targets"], ["flat"])
+
 
 if __name__ == "__main__":
     unittest.main()

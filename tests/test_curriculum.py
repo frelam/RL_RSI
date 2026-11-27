@@ -45,6 +45,13 @@ class CurriculumTests(unittest.TestCase):
         self.assertEqual([d.capability for d in decision.defects], ["b"])
         self.assertIn("severity", decision.notes)
 
+    def test_carried_over_capabilities_are_planned_first(self) -> None:
+        policy = SeverityCurriculum(self.runtime, cfg({"max_capabilities": 1}))
+        context = SimpleNamespace(round=1, collect_result=None, state=SimpleNamespace(pending_capabilities=["a"]))
+        decision = policy.select([defect("a", 0.4), defect("b", 0.9)], context)
+        self.assertEqual([d.capability for d in decision.defects], ["a"])
+        self.assertIn("carried over first: ['a']", decision.notes)
+
     def test_fixed_order_unlocks_prefix_per_round(self) -> None:
         policy = FixedOrderCurriculum(
             self.runtime,

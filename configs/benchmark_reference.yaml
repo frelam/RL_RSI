@@ -1,0 +1,232 @@
+# Reference scores for the `missing_capability` analyzer: the score of an average
+# open-weight model on one EvalScope benchmark, by parameter count in billions.
+#
+# Each point is [mean, std] over the models of that size class (population std).
+# The analyzer interpolates linearly between neighbouring sizes and clamps
+# outside the table. A `benchmark.subset` key (e.g. `arc.ARC-Easy`) is the curve
+# of that subset.
+#
+# Population: instruction-tuned models except the Gemma 3 1B-12B rows of the
+# general tables and the two entries marked "base models only" above their key.
+# Scores are self-reported by each publisher, so settings differ per benchmark;
+# read the note above a key before relying on its std. Only whole-benchmark
+# curves were published for most models, so subsets are sparse.
+#
+# Sources (fetched 2026-11-27):
+#   Qwen2.5 LLM blog          https://qwenlm.github.io/blog/qwen2.5-llm/
+#   Llama 3.1 / 3.2 / 3.3     https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
+#                             https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct
+#                             https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct
+#                             https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct
+#   Gemma 2 / Gemma 3         https://huggingface.co/google/gemma-2-9b-it
+#                             https://huggingface.co/google/gemma-3-27b-it
+#   Phi-3-mini / Phi-4        https://huggingface.co/microsoft/Phi-3-mini-4k-instruct
+#                             https://huggingface.co/microsoft/phi-4
+#   Mistral Small 3.1         https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503
+#   GLM-4-9B-Chat             https://huggingface.co/THUDM/glm-4-9b-chat
+#   InternLM2.5-20B-Chat      https://huggingface.co/internlm/internlm2_5-20b-chat
+benchmarks:
+  # Llama rows are the English-only average; Gemma 2 is the full average; the rest are Phi-3's table.
+  agieval:
+    # 3-4B, n=2: Phi-3-mini-4k-instruct 0.390, Gemma-3-4B-PT 0.421
+    4.06: [0.405, 0.015]
+    # 7-9B, n=5: Mistral-7B-Instruct-v0.2 0.351, Llama-3-8B-Instruct 0.420, Llama-3.1-8B-Instruct 0.478, Gemma-7B-IT 0.421, Gemma-2-9B-IT 0.528
+    8.22: [0.440, 0.060]
+    # 12-14B, n=1: Gemma-3-12B-PT 0.574
+    12.19: [0.574, 0.000]
+    # 20-27B, n=1: Gemma-2-27B-IT 0.551
+    27.20: [0.551, 0.000]
+    # 70-72B, n=1: Llama-3.1-70B-Instruct 0.646
+    70.60: [0.646, 0.000]
+  # ARC-Challenge. Shots differ by source: 0-shot (Llama 3.1), 25-shot (Gemma 2), 10-shot (Phi-3).
+  arc:
+    # 1-2B, n=1: Llama-3.2-1B-Instruct 0.328
+    1.24: [0.328, 0.000]
+    # 3-4B, n=3: Llama-3.2-3B-Instruct 0.463, Phi-3-mini-4k-instruct 0.863, Gemma-3-4B-PT 0.562
+    3.78: [0.629, 0.170]
+    # 7-9B, n=5: Mistral-7B-Instruct-v0.2 0.786, Llama-3.1-8B-Instruct 0.797, Llama-3-8B-Instruct 0.828, Gemma-7B-IT 0.783, Gemma-2-9B-IT 0.684
+    8.22: [0.776, 0.048]
+    # 12-14B, n=1: Gemma-3-12B-PT 0.689
+    12.19: [0.689, 0.000]
+    # 20-27B, n=1: Gemma-2-27B-IT 0.714
+    27.20: [0.714, 0.000]
+    # 32-34B, n=1: Yi-1.5-34B-Chat 0.656
+    34.00: [0.656, 0.000]
+    # 70-72B, n=1: Llama-3.1-70B-Instruct 0.929
+    70.60: [0.929, 0.000]
+  # Gemma 3 base models only; n is too small to trust. Base models only.
+  arc.ARC-Easy:
+    # 3-4B, n=1: Gemma-3-4B-PT 0.824
+    4.30: [0.824, 0.000]
+    # 12-14B, n=1: Gemma-3-12B-PT 0.883
+    12.19: [0.883, 0.000]
+    # 20-27B, n=1: Gemma-2-27B-IT 0.886
+    27.20: [0.886, 0.000]
+  # Mixes CoT and non-CoT settings; no Qwen2.5-Instruct, Llama 3.1 or 70B rows were published.
+  bbh:
+    # 3-4B, n=2: Phi-3-mini-4k-instruct 0.735, Gemma-3-4B-PT 0.509
+    4.06: [0.622, 0.113]
+    # 7-9B, n=4: Mistral-7B-Instruct-v0.2 0.573, Qwen2.5-7B-Instruct 0.704, Llama-3-8B-Instruct 0.515, Gemma-7B-IT 0.596
+    7.85: [0.597, 0.068]
+    # 12-14B, n=1: Gemma-3-12B-PT 0.726
+    12.19: [0.726, 0.000]
+    # 20-27B, n=2: InternLM2.5-20B-Chat 0.763, Gemma-2-27B-IT 0.749
+    23.60: [0.756, 0.007]
+    # 32-34B, n=1: Yi-1.5-34B-Chat 0.764
+    34.00: [0.764, 0.000]
+  # Phi-4 reports the full MATH set; the rest report MATH under different CoT settings.
+  competition_math:
+    # 1-2B, n=2: Llama-3.2-1B-Instruct 0.306, Qwen2.5-1.5B-Instruct 0.552
+    1.39: [0.429, 0.123]
+    # 3-4B, n=6: Gemma-2-2B-IT 0.266, Qwen2.5-3B-Instruct 0.659, Llama-3.2-3B-Instruct 0.205, Phi-3.5-mini-instruct 0.485, MiniCPM3-4B 0.466, Gemma-3-4B-PT 0.242
+    3.50: [0.387, 0.163]
+    # 7-9B, n=5: Qwen2.5-7B-Instruct 0.755, Llama-3.1-8B-Instruct 0.519, Llama-3-8B-Instruct 0.300, GLM-4-9B-Chat 0.506, Gemma-2-9B-IT 0.491
+    8.38: [0.514, 0.145]
+    # 12-14B, n=3: Gemma-3-12B-PT 0.433, Phi-4 0.804, Qwen2.5-14B-Instruct 0.810
+    13.64: [0.682, 0.176]
+    # 20-27B, n=4: InternLM2.5-20B-Chat 0.647, Mistral-Small-3.1-24B-Instruct 0.693, Gemma-2-27B-IT 0.427, Gemma-3-27B-IT 0.690
+    24.52: [0.614, 0.110]
+    # 32-34B, n=2: Qwen2.5-32B-Instruct 0.831, Yi-1.5-34B-Chat 0.417
+    33.25: [0.624, 0.207]
+    # 70-72B, n=2: Llama-3.1-70B-Instruct 0.680, Qwen2.5-72B-Instruct 0.831
+    71.65: [0.756, 0.075]
+  # Gemma 3 base models only; n is too small to trust. Base models only.
+  drop:
+    # 3-4B, n=1: Gemma-3-4B-PT 0.601
+    4.30: [0.601, 0.000]
+    # 12-14B, n=1: Gemma-3-12B-PT 0.722
+    12.19: [0.722, 0.000]
+    # 20-27B, n=1: Gemma-3-27B-IT 0.772
+    27.30: [0.772, 0.000]
+  # Most sources report GPQA main or unlabelled GPQA; only Llama and Mistral report Diamond.
+  gpqa_diamond:
+    # 1-2B, n=2: Llama-3.2-1B-Instruct 0.310, Qwen2.5-1.5B-Instruct 0.298
+    1.39: [0.304, 0.006]
+    # 3-4B, n=6: Qwen2.5-3B-Instruct 0.303, Llama-3.2-3B-Instruct 0.383, Phi-3.5-mini-instruct 0.272, Phi-3-mini-4k-instruct 0.306, MiniCPM3-4B 0.313, Gemma-3-4B-PT 0.150
+    3.70: [0.288, 0.070]
+    # 7-9B, n=4: Qwen2.5-7B-Instruct 0.364, Llama-3.1-8B-Instruct 0.304, Llama-3-8B-Instruct 0.324, Gemma-2-9B-IT 0.328
+    8.23: [0.330, 0.022]
+    # 12-14B, n=3: Gemma-3-12B-PT 0.254, Phi-4 0.561, Qwen2.5-14B-Instruct 0.328
+    13.64: [0.381, 0.131]
+    # 20-27B, n=4: InternLM2.5-20B-Chat 0.333, Mistral-Small-3.1-24B-Instruct 0.460, Gemma-2-27B-IT 0.349, Gemma-3-27B-IT 0.424
+    24.52: [0.392, 0.052]
+    # 32-34B, n=2: Qwen2.5-32B-Instruct 0.495, Yi-1.5-34B-Chat 0.374
+    33.25: [0.434, 0.060]
+    # 70-72B, n=3: Llama-3.1-70B-Instruct 0.467, Llama-3.3-70B-Instruct 0.505, Qwen2.5-72B-Instruct 0.490
+    71.30: [0.487, 0.016]
+  gsm8k:
+    # 1-2B, n=1: Qwen2.5-1.5B-Instruct 0.732
+    1.54: [0.732, 0.000]
+    # 3-4B, n=6: Gemma-2-2B-IT 0.632, Qwen2.5-3B-Instruct 0.867, Phi-3.5-mini-instruct 0.862, Phi-3-mini-4k-instruct 0.857, MiniCPM3-4B 0.811, Gemma-3-4B-PT 0.384
+    3.60: [0.736, 0.177]
+    # 7-9B, n=6: Mistral-7B-Instruct-v0.2 0.464, Qwen2.5-7B-Instruct 0.916, Llama-3-8B-Instruct 0.774, Gemma-7B-IT 0.598, GLM-4-9B-Chat 0.796, Gemma-2-9B-IT 0.767
+    8.28: [0.719, 0.147]
+    # 12-14B, n=2: Gemma-3-12B-PT 0.710, Qwen2.5-14B-Instruct 0.932
+    13.48: [0.821, 0.111]
+    # 20-27B, n=1: Gemma-2-27B-IT 0.811
+    27.20: [0.811, 0.000]
+    # 32-34B, n=2: Qwen2.5-32B-Instruct 0.959, Yi-1.5-34B-Chat 0.817
+    33.25: [0.888, 0.071]
+    # 70-72B, n=2: Llama-3.1-70B-Instruct 0.951, Qwen2.5-72B-Instruct 0.958
+    71.65: [0.954, 0.004]
+  hellaswag:
+    # 3-4B, n=2: Phi-3-mini-4k-instruct 0.753, Gemma-3-4B-PT 0.772
+    4.06: [0.762, 0.010]
+    # 7-9B, n=4: Mistral-7B-Instruct-v0.2 0.585, Llama-3-8B-Instruct 0.711, Gemma-7B-IT 0.498, Gemma-2-9B-IT 0.819
+    8.26: [0.653, 0.122]
+    # 12-14B, n=1: Gemma-3-12B-PT 0.842
+    12.19: [0.842, 0.000]
+    # 20-27B, n=1: Gemma-2-27B-IT 0.864
+    27.20: [0.864, 0.000]
+    # 32-34B, n=1: Yi-1.5-34B-Chat 0.859
+    34.00: [0.859, 0.000]
+  humaneval:
+    # 1-2B, n=2: Llama-3.2-1B-Instruct 0.073, Qwen2.5-1.5B-Instruct 0.616
+    1.39: [0.344, 0.271]
+    # 3-4B, n=7: Gemma-2-2B-IT 0.689, Qwen2.5-3B-Instruct 0.744, Llama-3.2-3B-Instruct 0.218, Phi-3.5-mini-instruct 0.726, Phi-3-mini-4k-instruct 0.573, MiniCPM3-4B 0.744, Gemma-3-4B-PT 0.360
+    3.55: [0.579, 0.195]
+    # 7-9B, n=7: Mistral-7B-Instruct-v0.2 0.280, Qwen2.5-7B-Instruct 0.848, Llama-3.1-8B-Instruct 0.726, Llama-3-8B-Instruct 0.604, Gemma-7B-IT 0.341, GLM-4-9B-Chat 0.718, Gemma-2-9B-IT 0.689
+    8.24: [0.601, 0.196]
+    # 12-14B, n=3: Gemma-3-12B-PT 0.457, Phi-4 0.826, Qwen2.5-14B-Instruct 0.884
+    13.64: [0.722, 0.189]
+    # 20-27B, n=3: Mistral-Small-3.1-24B-Instruct 0.884, Gemma-2-27B-IT 0.549, Gemma-3-27B-IT 0.878
+    26.03: [0.770, 0.157]
+    # 32-34B, n=2: Qwen2.5-32B-Instruct 0.884, Yi-1.5-34B-Chat 0.463
+    33.25: [0.673, 0.210]
+    # 70-72B, n=3: Llama-3.1-70B-Instruct 0.805, Llama-3.3-70B-Instruct 0.884, Qwen2.5-72B-Instruct 0.866
+    71.30: [0.852, 0.034]
+  # Strict prompt-level accuracy.
+  ifeval:
+    # 1-2B, n=2: Llama-3.2-1B-Instruct 0.597, Qwen2.5-1.5B-Instruct 0.425
+    1.39: [0.511, 0.086]
+    # 3-4B, n=5: Gemma-2-2B-IT 0.510, Qwen2.5-3B-Instruct 0.582, Llama-3.2-3B-Instruct 0.775, Phi-3.5-mini-instruct 0.521, MiniCPM3-4B 0.684
+    3.34: [0.614, 0.101]
+    # 7-9B, n=5: Qwen2.5-7B-Instruct 0.712, Llama-3.1-8B-Instruct 0.804, Llama-3-8B-Instruct 0.686, GLM-4-9B-Chat 0.690, Gemma-2-9B-IT 0.701
+    8.38: [0.719, 0.044]
+    # 12-14B, n=1: Qwen2.5-14B-Instruct 0.810
+    14.77: [0.810, 0.000]
+    # 20-27B, n=1: Gemma-2-27B-IT 0.804
+    27.20: [0.804, 0.000]
+    # 32-34B, n=1: Qwen2.5-32B-Instruct 0.795
+    32.50: [0.795, 0.000]
+    # 70-72B, n=2: Llama-3.1-70B-Instruct 0.875, Qwen2.5-72B-Instruct 0.841
+    71.65: [0.858, 0.017]
+  # Llama rows are MBPP EvalPlus, which scores higher than base MBPP.
+  mbpp:
+    # 1-2B, n=2: Llama-3.2-1B-Instruct 0.181, Qwen2.5-1.5B-Instruct 0.632
+    1.39: [0.406, 0.226]
+    # 3-4B, n=7: Gemma-2-2B-IT 0.749, Qwen2.5-3B-Instruct 0.727, Llama-3.2-3B-Instruct 0.387, Phi-3.5-mini-instruct 0.632, Phi-3-mini-4k-instruct 0.698, MiniCPM3-4B 0.725, Gemma-3-4B-PT 0.460
+    3.55: [0.625, 0.134]
+    # 7-9B, n=6: Mistral-7B-Instruct-v0.2 0.508, Qwen2.5-7B-Instruct 0.792, Llama-3.1-8B-Instruct 0.728, Llama-3-8B-Instruct 0.677, Gemma-7B-IT 0.515, Gemma-2-9B-IT 0.749
+    8.12: [0.662, 0.111]
+    # 12-14B, n=2: Gemma-3-12B-PT 0.604, Qwen2.5-14B-Instruct 0.857
+    13.48: [0.730, 0.127]
+    # 20-27B, n=3: Mistral-Small-3.1-24B-Instruct 0.747, Gemma-2-27B-IT 0.626, Gemma-3-27B-IT 0.744
+    26.03: [0.706, 0.056]
+    # 32-34B, n=1: Qwen2.5-32B-Instruct 0.840
+    32.50: [0.840, 0.000]
+    # 70-72B, n=2: Llama-3.1-70B-Instruct 0.860, Qwen2.5-72B-Instruct 0.882
+    71.65: [0.871, 0.011]
+  mmlu:
+    # 1-2B, n=1: Llama-3.2-1B-Instruct 0.328
+    1.24: [0.328, 0.000]
+    # 3-4B, n=3: Llama-3.2-3B-Instruct 0.583, Phi-3-mini-4k-instruct 0.709, Gemma-3-4B-PT 0.596
+    3.78: [0.629, 0.057]
+    # 7-9B, n=7: Mistral-7B-Instruct-v0.2 0.617, Qwen2.5-7B-Instruct 0.742, Llama-3.1-8B-Instruct 0.694, Llama-3-8B-Instruct 0.665, Gemma-7B-IT 0.636, GLM-4-9B-Chat 0.724, Gemma-2-9B-IT 0.713
+    8.24: [0.684, 0.043]
+    # 12-14B, n=3: Gemma-3-12B-PT 0.745, Phi-4 0.848, Qwen2.5-14B-Instruct 0.797
+    13.64: [0.797, 0.042]
+    # 20-27B, n=4: InternLM2.5-20B-Chat 0.735, Mistral-Small-3.1-24B-Instruct 0.806, Gemma-2-27B-IT 0.752, Gemma-3-27B-IT 0.769
+    24.52: [0.766, 0.026]
+    # 32-34B, n=2: Qwen2.5-32B-Instruct 0.833, Yi-1.5-34B-Chat 0.772
+    33.25: [0.802, 0.030]
+    # 70-72B, n=3: Llama-3.1-70B-Instruct 0.836, Llama-3.3-70B-Instruct 0.860, Qwen2.5-72B-Instruct 0.861
+    71.30: [0.852, 0.012]
+  mmlu_pro:
+    # 1-2B, n=1: Qwen2.5-1.5B-Instruct 0.324
+    1.54: [0.324, 0.000]
+    # 3-4B, n=5: Gemma-2-2B-IT 0.267, Qwen2.5-3B-Instruct 0.437, Phi-3.5-mini-instruct 0.475, MiniCPM3-4B 0.430, Gemma-3-4B-PT 0.292
+    3.56: [0.380, 0.084]
+    # 7-9B, n=3: Qwen2.5-7B-Instruct 0.450, Llama-3.1-8B-Instruct 0.483, Gemma-2-9B-IT 0.521
+    8.29: [0.485, 0.029]
+    # 12-14B, n=2: Gemma-3-12B-PT 0.453, Qwen2.5-14B-Instruct 0.512
+    13.48: [0.483, 0.029]
+    # 20-27B, n=3: Mistral-Small-3.1-24B-Instruct 0.668, Gemma-2-27B-IT 0.491, Gemma-3-27B-IT 0.675
+    26.03: [0.611, 0.085]
+    # 32-34B, n=2: Qwen2.5-32B-Instruct 0.551, Yi-1.5-34B-Chat 0.483
+    33.25: [0.517, 0.034]
+    # 70-72B, n=3: Llama-3.1-70B-Instruct 0.664, Llama-3.3-70B-Instruct 0.689, Qwen2.5-72B-Instruct 0.711
+    71.30: [0.688, 0.019]
+  winogrande:
+    # 3-4B, n=2: Phi-3-mini-4k-instruct 0.716, Gemma-3-4B-PT 0.647
+    4.06: [0.681, 0.034]
+    # 7-9B, n=5: Mistral-7B-Instruct-v0.2 0.542, Llama-3-8B-Instruct 0.650, Llama-3.1-8B-Instruct 0.605, Gemma-7B-IT 0.556, Gemma-2-9B-IT 0.806
+    8.22: [0.632, 0.095]
+    # 12-14B, n=1: Gemma-3-12B-PT 0.743
+    12.19: [0.743, 0.000]
+    # 20-27B, n=1: Gemma-2-27B-IT 0.837
+    27.20: [0.837, 0.000]
+    # 32-34B, n=1: Yi-1.5-34B-Chat 0.849
+    34.00: [0.849, 0.000]
+    # 70-72B, n=1: Llama-3.1-70B-Instruct 0.833
+    70.60: [0.833, 0.000]

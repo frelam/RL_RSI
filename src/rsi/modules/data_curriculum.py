@@ -36,8 +36,26 @@ class _Base(CurriculumPolicy):
     def priority(self, defect: Defect) -> float:
         return defect.severity * defect.confidence * (1 + self.runtime.catalog.priority(defect.capability))
 
-    def _limit(self, defects: list[Defect], stage: str, notes: str, excluded: list[dict[str, Any]] | None = None) -> CurriculumDecision:
-        ordered = sorted(defects, key=self.priority, reverse=True)
+    def pending(self, context: Any) -> set[str]:
+        """Capabilities an earlier round did not improve; they are planned first."""
+        return {
+            str(name) for name in getattr(getattr(context, "state", None), "pending_capabilities", None) or []
+        }
+
+    def _limit(
+        self,
+        defects: list[Defect],
+        stage: str,
+        notes: str,
+        excluded: list[dict[str, Any]] | None = None,
+        pending: set[str] | None = None,
+    ) -> CurriculumDecision:
+        pending = pending or set()
+        ordered = sorted(
+            defects, key=lambda defect: (defect.capability in pending, self.priority(defect)), reverse=True
+        )
+        if pending & {defect.capability for defect in defects}:
+            notes += f"; carried over first: {sorted(pending)}"
         selected: list[Defect] = []
         seen: set[str] = set()
         for defect in ordered:
@@ -60,7 +78,10 @@ class SeverityCurriculum(_Base):
     """Default: rank by severity, confidence and catalog priority."""
 
     def select(self, defects: list[Defect], context: Any) -> CurriculumDecision:
-        return self._limit(defects, "severity", "ordered by severity, confidence and catalog priority")
+        return self._limit(
+            defects, "severity", "ordered by severity, confidence and catalog priority",
+            pending=self.pending(context),
+        )
 
 
 class FixedOrderCurriculum(_Base):
@@ -87,6 +108,7 @@ class FixedOrderCurriculum(_Base):
             f"stage-{stage}",
             f"eligible={sorted(eligible)}",
             excluded=excluded,
+            pending=self.pending(context),
         )
 
 
@@ -128,7 +150,7 @@ class PrerequisiteCurriculum(_Base):
         notes = f"score_floor={self.score_floor}"
         if excluded:
             notes += f"; excluded {len(excluded)} locked capability(ies)"
-        return self._limit(chosen, "prerequisite", notes, excluded=excluded)
+        return self._limit(chosen, "prerequisite", notes, excluded=excluded, pending=self.pending(context))
 
 
 from rsi.core.registry import register  # noqa: E402  (keeps base classes readable above)

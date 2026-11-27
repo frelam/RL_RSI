@@ -49,6 +49,23 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 
 The shared capability catalog in `configs/capabilities.yaml` defines ability names, priorities, reward/verifier settings, and benchmark mappings. Benchmark adapters may also declare a URL and description. Reports include the capabilities observed in their evaluated items. The optional `trajectory_agent` analyzer estimates task ability priorities from collected traces. The analysis merger combines rule and trajectory estimates using configurable source weights.
 
+The optional `missing_capability` analyzer infers missing capabilities from benchmark results:
+
+- `configs/benchmarks.yaml` maps each benchmark to the capabilities it covers.
+- `configs/benchmark_reference.yaml` gives the mean and standard deviation of open-model scores per benchmark, keyed by parameter count. A `benchmark.subset` entry holds the curve of one subset.
+- A report that labels its items with a subset is judged subset by subset; otherwise the benchmark is judged as a whole. A benchmark or subset performs well when its score is within `max(margin, sigma * std)` of the reference at the model size (`params_b`, or `checkpoint.initial.params_b`). Every capability of a well-performing benchmark or subset is marked as present.
+- Each catalog capability that stays unmarked is reported as a missing capability, with severity scaled by its catalog priority. A benchmark or subset without a reference curve is skipped, or judged against `absolute_threshold` when `unreferenced: absolute`. When every collected benchmark is skipped, the analyzer reports no defects.
+
+`data.plan.scope` limits the run to a target capability scope: defects outside it are dropped before planning, and the benchmarks should cover every capability in the scope.
+
+## Validation
+
+Benchmark validation compares the candidate with its parent on the round's target capabilities and on the other measured capabilities:
+
+- The candidate is accepted when at least one target capability improves, no other capability regresses beyond `max_other_regression`, and the overall metric passes `min_delta`.
+- Targets that did not improve, and targets no benchmark measures, are listed in the result (`failed_targets`, `unmeasured_targets`) and saved as `pending_capabilities` in `state.json`. The next round plans their data first, before other defects.
+- When no target capability improves, the candidate is rejected.
+
 ## 2. Determine a new data strategy to fix the model
 - Need some smart algorithm to produce data strategy. 
   e.g.:<br />

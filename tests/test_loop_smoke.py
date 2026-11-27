@@ -119,6 +119,27 @@ class LoopSmokeTests(unittest.TestCase):
             manifest = read_json(Path(first["synthesize"]["dataset_path"]) / "manifest.json")
             self.assertGreater(manifest["stats"]["sources"].get("dataset:math_word_problems", 0), 0)
 
+    def test_scope_drops_out_of_scope_defects_before_planning(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            config = _write_config(
+                td, "scope.yaml",
+                "stop:\n  policies:\n    - {type: max_rounds, max_rounds: 1}\n"
+                "data:\n  plan:\n    scope: [math.reasoning]\n",
+            )
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "scope-demo",
+                     "--runs-dir", td, "--quiet"]
+                )
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            run_dir = Path(td) / "scope-demo"
+            defects = read_json(run_dir / "rounds" / "round-0000" / "analyze" / "defects.json")
+            self.assertEqual(defects["metadata"]["scope"], ["math.reasoning"])
+            self.assertEqual({d["capability"] for d in defects["defects"]} - {"math.reasoning"}, set())
+            first = read_json(run_dir / "state.json")["history"][0]
+            self.assertLessEqual(set(first.get("validation", {}).get("targets", [])), {"math.reasoning"})
+
 
 if __name__ == "__main__":
     unittest.main()

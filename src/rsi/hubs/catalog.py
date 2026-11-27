@@ -95,3 +95,44 @@ class CapabilityCatalog:
     def benchmark_filters(self, capability: str) -> list[dict[str, Any]]:
         value = self.get(capability).get("benchmark") or []
         return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+class BenchmarkCatalog:
+    """Benchmark registry: which capabilities each benchmark covers.
+
+    Reads ``benchmarks:`` from a YAML file such as ``configs/benchmarks.yaml``.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self._benchmarks: dict[str, dict[str, Any]] = {}
+        self._load()
+
+    def _load(self) -> None:
+        if not self.path.exists():
+            raise ConfigError(f"Benchmark registry not found: {self.path}")
+        with self.path.open("r", encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+        benchmarks = raw.get("benchmarks") if isinstance(raw, dict) else None
+        if not isinstance(benchmarks, dict):
+            raise ConfigError(f"Benchmark registry must contain a 'benchmarks' mapping: {self.path}")
+        for name, spec in benchmarks.items():
+            if not isinstance(spec, dict):
+                raise ConfigError(f"Benchmark {name!r} must be a mapping: {self.path}")
+            self._benchmarks[str(name)] = spec
+
+    def get(self, benchmark: str) -> dict[str, Any] | None:
+        return self._benchmarks.get(benchmark)
+
+    def capabilities(self, benchmark: str, subset: str | None = None) -> list[str]:
+        """Capabilities covered by a benchmark, or by one of its named subsets.
+
+        A subset listed under ``subsets:`` overrides the benchmark default.
+        """
+        entry = self.get(benchmark) or {}
+        if subset is not None:
+            named = (entry.get("subsets") or {}).get(subset)
+            if isinstance(named, list):
+                return [str(v) for v in named]
+        value = entry.get("capabilities") or []
+        return [str(v) for v in value] if isinstance(value, list) else []

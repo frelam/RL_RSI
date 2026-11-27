@@ -127,6 +127,7 @@ class AnalyzeStage(Stage):
             child = cfg.child(spec, name)
             self.analyzers.append((name, runtime.build("analyzer", spec, child)))
         self.merger = DefectMerger(cfg.section("merge", required=False))
+        self.scope = {str(v) for v in runtime.config.get_list("data.plan.scope", [])}
 
     def validate(self) -> None:
         for name, analyzer in self.analyzers:
@@ -153,6 +154,11 @@ class AnalyzeStage(Stage):
             except Exception as exc:  # noqa: BLE001 - one analyzer must not kill the loop
                 self.logger.warning("analyzer %s failed: %s", name, exc)
                 errors.append(f"{name}: {exc}")
+        dropped = 0
+        if self.scope:
+            for report in reports:
+                dropped += sum(1 for defect in report.defects if defect.capability not in self.scope)
+                report.defects = [d for d in report.defects if d.capability in self.scope]
         if not reports:
             merged = DefectReport(
                 round=ctx.round,
@@ -169,6 +175,8 @@ class AnalyzeStage(Stage):
                 capabilities=collect.capabilities,
             )
             merged.metadata["errors"] = errors
+        merged.metadata["scope"] = sorted(self.scope)
+        merged.metadata["out_of_scope_defects"] = dropped
         ctx.memory["defects"] = merged
         self.runtime.artifacts.write_json(ctx.round, "analyze", "defects.json", merged)
         top = [
@@ -563,10 +571,13 @@ class ValidateStage(Stage):
         targets = sorted({request.capability for request in data.plan.requests}) if data else []
         deltas = {name: rec.score - base_table[name].score for name, rec in table.items()
                   if name in base_table}
+        unmeasured_targets = [name for name in targets if name not in deltas]
         failed_targets = [
             name for name in targets
-            if name not in deltas or (deltas[name] <= 0 or deltas[name] < self.target_min_delta)
+            if name in deltas and (deltas[name] <= 0 or deltas[name] < self.target_min_delta)
         ]
+        improved_targets = [name for name in targets if name not in failed_targets and name not in unmeasured_targets]
+        unresolved = failed_targets + unmeasured_targets
         regressions = [name for name in sorted(set(base_table) - set(targets))
                        if name not in deltas or deltas[name] < -self.max_other_regression]
         comparable = all(
@@ -588,12 +599,15 @@ class ValidateStage(Stage):
         )
         if not comparable:
             result.update(accepted=False, reason="benchmark coverage or results are incomplete")
-        elif failed_targets:
-            result.update(accepted=False, reason="target capabilities did not improve: " + ", ".join(failed_targets))
+        elif not improved_targets:
+            result.update(accepted=False, reason="no target capability improved: " + ", ".join(unresolved))
         elif regressions and not self.allow_regression:
             result.update(accepted=False, reason="other capabilities regressed: " + ", ".join(regressions))
+        elif unresolved:
+            result["reason"] += "; carried to the next round: " + ", ".join(unresolved)
         result.update(source="benchmark", capabilities=_cap_scores(table), aggregate=aggregate,
                       targets=targets, capability_deltas=deltas, failed_targets=failed_targets,
+                      unmeasured_targets=unmeasured_targets, improved_targets=improved_targets,
                       regressions=regressions)
         return result
 
@@ -626,6 +640,14 @@ class ValidateStage(Stage):
             "validation_score": result["score"], "validation_source": result["source"],
             "validation_metric": self.metric, "accepted": result["accepted"],
         })
+        if result.get("source") == "benchmark":
+            carried = [
+                name for name in getattr(ctx.state, "pending_capabilities", None) or []
+                if name not in result["improved_targets"]
+            ]
+            ctx.state.pending_capabilities = sorted(
+                set(carried) | set(result["failed_targets"]) | set(result["unmeasured_targets"])
+            )
         self.runtime.artifacts.write_json(ctx.round, stage, "validation.json", result)
 
 

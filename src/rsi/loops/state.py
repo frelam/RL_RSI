@@ -22,6 +22,8 @@ class LoopState:
     updated_at: str = ""
     seed: int = 0
     budget: dict[str, Any] = field(default_factory=dict)
+    # Target capabilities a finished round did not improve; the next round plans their data first.
+    pending_capabilities: list[str] = field(default_factory=list)
 
 
 def new_state(run_id: str, loop: str, seed: int) -> LoopState:

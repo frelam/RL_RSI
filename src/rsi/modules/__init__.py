@@ -1,6 +1,7 @@
 """Importing this package registers all built-in modules."""
 
 from rsi.modules import (  # noqa: F401
+    analyze_coverage,
     analyze_llm,
     analyze_merge,
     analyze_rule,
