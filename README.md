@@ -40,20 +40,18 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 - collect newest benchmark and merge into the former benchmark.
 - Collect failure traces and run benchmark to test model.(via evalscope, etc.)(pass@k\mean@k\response_length)
 - Defined a set of foundation capabilities.
+  - The catalog is `configs/capabilities.yaml`: ability names, priorities, and reward and verifier settings. See [capability catalog](docs/capability_analysis.md#capability-catalog-and-analyzers).
 - Define a task-capabilities map. User can custom its own task.
+  - The optional `trajectory_agent` analyzer estimates ability priorities from collected traces.
 - Define a task-benchmark map. To cover required capabilities.
 - Define a benchmark-capabilities map. To digest which capabilities not cover
+  - `configs/benchmarks.yaml` maps each benchmark and subset to the capabilities it covers.
 - Summarize which capabilities are missing.(use benchmark maps or LLM judge)
+  - Three analyzers: low scores against a baseline (`rule`), LLM-judged bad cases (`llm_judge`), and `missing_capability`, which compares scores with same-size open-model references. See [missing capability analyzer](docs/capability_analysis.md#missing-capability-analyzer) and [its reference rule](docs/capability_decision_theory.md#reference-rule-as-a-one-sided-test).
 - Prioritize the missing capabilities based on their foundational nature and importance.
+  - Severity scales with the catalog priority, and findings from all analyzers are merged. See [merging findings](docs/capability_decision_theory.md#merging-of-analyzer-findings) and [planning order](docs/capability_decision_theory.md#planning-order).
 - deliver missing capabilities map and their priorities.
-
-The shared capability catalog in `configs/capabilities.yaml` defines ability names, priorities, reward/verifier settings, and benchmark mappings. The analyzers judge the collected benchmarks from three angles: low scores against a baseline (rule), LLM-judged bad cases, and missing capabilities inferred by comparing scores with same-size open-model references (`missing_capability`). The optional `trajectory_agent` analyzer estimates task ability priorities from collected traces. See [capability analysis](docs/capability_analysis.md) and [the theory behind the analyzers and validation](docs/capability_decision_theory.md).
-
-`data.plan.scope` limits the run to a target capability scope. See [capability scope](docs/capability_analysis.md#capability-scope).
-
-## Validation
-
-Validation compares the candidate with its parent on the round's target capabilities and on the other measured capabilities, and decides whether the candidate is promoted. Targets that did not improve are carried to the next round. See [validation](docs/capability_analysis.md#validation) and [validation as a joint test](docs/capability_decision_theory.md#validation-as-a-joint-test).
+  - `data.plan.scope` limits the run to a target capability scope. See [capability scope](docs/capability_analysis.md#capability-scope).
 
 ## 2. Determine a new data strategy to fix the model
 - Need some smart algorithm to produce data strategy. 
@@ -62,19 +60,20 @@ Validation compares the candidate with its parent on the round's target capabili
       2.Assign greater data weight to more important and fundamental capabilities.<br />
       3.Ensure that all affected domains have corresponding data coverage.<br />
       4.Ensure that data strategies for other dimensions are not significantly affected.<br />
+  - Sources are chosen and weighted by a greedy weighted-coverage search. See [selection theory](docs/dataset_selection_theory.md).
 - Datasource:<br />
               1. Private datasets (adapters can be defined to specify data retrieval interfaces)<br />
               2. from web<br />
               3. from hf or github<br />
               4. Synthetic data<br />
+  - Private datasets are registered in `configs/datasets.yaml`, one entry per dataset, and loaded by the `dataset_library` collector. See [the dataset registry and collector](docs/dataset_library.md).
 - Need some data process technology
   - Deduplication (using hashing, etc.)
   - Prevent benchmark data leakage
 - Combine recent train.jsonl data with newly sampled data to synthesize a dataset and reduce forgetting. Validation samples are excluded from replay.
+  - The replayed rows make up a fixed share of the new samples. See [replay share](docs/dataset_selection_theory.md#replay-share).
 - Deliver a new dataset and the desired mix ratio.
 - Enhance the reward associated with the data
-
-Curated datasets are registered in `configs/datasets.yaml`, one entry per dataset, and loaded by the `dataset_library` collector instead of being synthesized. See [the dataset registry and collector](docs/dataset_library.md) and [the selection theory](docs/dataset_selection_theory.md).
 
 ## 3. use RL framework to train by model it-self.(via verl, slime, etc.)
 - Filter the data with difficulty level from data pool.
@@ -108,5 +107,6 @@ Curated datasets are registered in `configs/datasets.yaml`, one entry per datase
 
 ## 4. Check new checkpoint
 - run benchmark check if desired domain has been improved.
+  - The candidate is promoted only when a target capability improves and no other measured capability regresses. Targets that did not improve are carried to the next round. See [validation](docs/capability_analysis.md#validation) and [validation as a joint test](docs/capability_decision_theory.md#validation-as-a-joint-test).
 - if ok, run OPD to merge new domain abilities to previous checkpoint.
 - if not ok, return to step 2
