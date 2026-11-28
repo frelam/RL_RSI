@@ -37,10 +37,10 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 ## 1. Collect trajectories/benchmarks and analyze missing capabilities
 
 - Start from the serving checkpoint and the capabilities carried over from the last round.
-- Datasource:
-  1. The deployment endpoint: benchmark runs and policy rollouts.
-  2. Benchmarks: the existing suite, plus new ones added to the registry.
-  3. The capability catalog: abilities and their priorities. See [capability catalog](docs/capability_analysis.md#capability-catalog-and-analyzers).
+- evidence source:
+  - The deployment endpoint: benchmark runs and policy rollouts.
+  - Benchmarks: the existing suite, plus new ones added to the registry.
+  - The capability catalog: abilities and their priorities. See [capability catalog](docs/capability_analysis.md#capability-catalog-and-analyzers).
 
 - **Capability gap analysis**
   - **Collect evidence.** Run the configured benchmarks; collect rollouts only inside the deployment you control.
@@ -54,12 +54,11 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
   - **Merge and prioritize.** Merge findings, drop out-of-scope capabilities, and order by catalog priority. See [merging findings](docs/capability_decision_theory.md#merging-of-analyzer-findings) and [planning order](docs/capability_decision_theory.md#planning-order).
 
 ## 2. Determine a new data strategy to fix the model
-- Datasource:<br />
-              1. Private datasets (adapters can be defined to specify data retrieval interfaces)<br />
-              2. from web<br />
-              3. from hf or github<br />
-              4. Synthetic data<br />
-  - Private datasets are registered in `configs/datasets.yaml`, one entry per dataset, and loaded by the `dataset_library` collector. See [the dataset registry and collector](docs/dataset_library.md).
+- Data source:
+  - Private datasets. See [the dataset registry and collector](docs/dataset_library.md).
+  - from web
+  - from hf or github
+  - Synthetic data
 
 - Auto dataset generation
   - **Adjust the target distribution.** Base on the missing capabilities, adjust target capabilities distribution. See [target adjustment](docs/dataset_selection_theory.md#target-distribution-adjustment).
