@@ -99,13 +99,21 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and [configs/datasets.yaml
   - Refer to https://natolambert.com/slides/2026/cornell-post-training/talk#33
   - The opt-in `scaling_law` monitor fits a bounded logistic curve after validation accuracy shows a slope peak and subsequent decline. It refreshes on each metric record, tracks compute using the current batch size, mini-batch size, and rollout count, and reports remaining compute plus current-rate step equivalents for p50, p75, p90, and the asymptotic p100 ceiling. See [RL scaling projection theory and configuration](docs/rl_scaling_law.md) for assumptions and limitations.
 
-- Go back to filter data step and continue training.
-- If run out of data, jump out the Loop. ( more than 2 epoch, to avoid overfit)
+- Determine continue the loop or jump out
+  - If performance is saturated， jump out of the Loop.
+    - maybe validation improve very slow in the past few steps
+    - maybe hit the theoritical peak.
+    - maybe compute budget is tight and the margin is little
+  - If run out of data, jump out the Loop. ( more than 2 epoch, to avoid overfit)
+  - Otherwise, Go back to filter data step and continue the training loop.
+
 - Finally get a new version of checkpoint which is good at validation score.
 
 
 ## 4. Check new checkpoint
 - run benchmark check if desired domain has been improved.
   - The candidate is promoted only when a target capability improves and no other measured capability regresses. Targets that did not improve are carried to the next round. See [validation](docs/capability_analysis.md#validation) and [validation as a joint test](docs/capability_decision_theory.md#validation-as-a-joint-test).
-- if ok, run OPD to merge new domain abilities to previous checkpoint.
+- if ok
+  - if multi-domain rl training, run OPD to merge new domain abilities to base checkpoint.
+  - else use new checkpoint as the new base checkpoint.
 - if not ok, return to step 2
