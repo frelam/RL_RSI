@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from collections import Counter
 from fractions import Fraction
 from pathlib import Path
@@ -36,6 +37,16 @@ class JsonlDatasetBuilder(DatasetBuilder):
         self.val_min = self.cfg.get_int("val_min", 1)
         self.val_max = self.cfg.get_int("val_max", 64)
         self.include_metadata = self.cfg.get_bool("include_metadata", True)
+        self.reward_defect_boost = self.cfg.get_float("reward.defect_boost", 1.0)
+        if self.reward_defect_boost < 1.0:
+            raise ValueError("reward.defect_boost must be at least 1")
+        codegen = self.cfg.get_dict("reward.codegen", {})
+        self.reward_codegen = bool(codegen.get("enabled", False))
+        self.reward_codegen_profile = str(codegen.get("profile", "generator"))
+        self.reward_codegen_prompt = str(codegen.get("prompt", "reward_code"))
+        self.reward_codegen_limit = int(codegen.get("max_capabilities", 2))
+        if self.reward_codegen_limit < 0:
+            raise ValueError("reward.codegen.max_capabilities must be non-negative")
 
     def build(
         self,
@@ -57,11 +68,13 @@ class JsonlDatasetBuilder(DatasetBuilder):
         train_path = write_jsonl(dataset_dir / "train.jsonl", [self._row(s) for s in train_samples])
         val_path = write_jsonl(dataset_dir / "val.jsonl", [self._row(s) for s in val_samples])
         all_path = write_jsonl(dataset_dir / "samples.jsonl", rows)
-        reward_spec = self._reward_spec(samples, dataset_id)
+        reward_spec = self._reward_spec(samples, dataset_id, context, dataset_dir)
         reward_path = atomic_write_json(dataset_dir / "reward_spec.json", reward_spec)
         stats = self._stats(samples, mixing)
         if getattr(context, "data_strategy", None):
             stats["data_strategy"] = context.data_strategy
+        if getattr(context, "synthesis", None):
+            stats["synthesis"] = context.synthesis
         train_groups = Counter(map(group_key, train_samples))
         stats["train_group_ratio"] = {
             group: count / len(train_samples) for group, count in sorted(train_groups.items())
@@ -244,24 +257,108 @@ class JsonlDatasetBuilder(DatasetBuilder):
             row["metadata"] = sample.metadata
         return row
 
-    def _reward_spec(self, samples: list[DataSample], dataset_id: str) -> dict[str, Any]:
+    def _reward_spec(
+        self,
+        samples: list[DataSample],
+        dataset_id: str,
+        context: Any | None = None,
+        dataset_dir: Path | None = None,
+    ) -> dict[str, Any]:
         reward_cfg = self.cfg.get_dict("reward", {})
         default = reward_cfg.get("default") or {"type": "rule", "name": "contains", "weight": 1.0}
         overrides = reward_cfg.get("by_capability") or {}
         by_capability: dict[str, Any] = {}
         hints = {sample.capability: sample.metadata["reward_hint"]
                  for sample in samples if sample.metadata.get("reward_hint")}
+        defects = self._defect_severities(context)
+        generated = 0
         for capability in sorted({sample.capability for sample in samples}):
             rule = dict(self.runtime.catalog.reward(capability) or {})
             rule = {**default, **rule, **hints.get(capability, {})}
             if capability in overrides and isinstance(overrides[capability], dict):
                 rule.update(overrides[capability])
+            severity = defects.get(capability, 0.0)
+            if severity > 0 and self.reward_defect_boost > 1:
+                base = float(rule.get("weight", 1.0))
+                rule["weight"] = base * (1.0 + (self.reward_defect_boost - 1.0) * severity)
+            if (
+                self.reward_codegen
+                and dataset_dir is not None
+                and severity > 0
+                and generated < self.reward_codegen_limit
+            ):
+                code = self._generate_reward_code(capability, severity, samples, dataset_id, dataset_dir)
+                if code:
+                    rule.update(code)
+                    generated += 1
             by_capability[capability] = rule
         return {
             "version": 1,
             "dataset_id": dataset_id,
             "default": default,
             "by_capability": by_capability,
+        }
+
+    def _defect_severities(self, context: Any | None) -> dict[str, float]:
+        report = getattr(context, "defects", None)
+        severities: dict[str, float] = {}
+        for defect in getattr(report, "defects", None) or []:
+            value = float(defect.severity) * float(defect.confidence)
+            severities[defect.capability] = max(severities.get(defect.capability, 0.0), value)
+        return severities
+
+    def _generate_reward_code(
+        self,
+        capability: str,
+        severity: float,
+        samples: list[DataSample],
+        dataset_id: str,
+        dataset_dir: Path,
+    ) -> dict[str, Any]:
+        """Ask the LLM agent for a reward module and persist it next to the rows."""
+        prompts = [
+            (sample.prompt[:200], sample.reference)
+            for sample in samples
+            if sample.capability == capability
+        ][:3]
+        try:
+            rendered = self.runtime.prompt_hub.render(
+                self.reward_codegen_prompt,
+                {
+                    "capability": capability,
+                    "severity": severity,
+                    "dataset_id": dataset_id,
+                    "sample_prompts": prompts,
+                },
+            )
+            from rsi.core.types import LLMRequest
+
+            response = self.runtime.llm(self.reward_codegen_profile).complete(
+                LLMRequest(
+                    prompt_id=rendered.key,
+                    prompt=rendered.text,
+                    system=rendered.system,
+                    schema=rendered.schema,
+                    temperature=0.0,
+                    max_tokens=2048,
+                    metadata={"capability": capability, "dataset_id": dataset_id},
+                )
+            )
+            payload = next((item for item in response.parsed if item is not None), None)
+            code = str((payload or {}).get("code") or "")
+            if not code.strip():
+                raise ValueError("reward code response is empty")
+        except Exception as exc:  # noqa: BLE001 - reward generation is best effort
+            self.logger.warning("reward code generation failed for %s: %s", capability, exc)
+            return {}
+        name = re.sub(r"[^A-Za-z0-9_.-]+", "-", capability)
+        target = dataset_dir / "rewards" / f"{name}.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(code, encoding="utf-8")
+        return {
+            "code_path": str(target),
+            "code_entrypoint": str(payload.get("entrypoint") or "compute_score"),
+            "code_language": str(payload.get("language") or "python"),
         }
 
     def _stats(self, samples: list[DataSample], mixing: dict[str, float]) -> dict[str, Any]:

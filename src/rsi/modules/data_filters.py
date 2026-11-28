@@ -8,7 +8,7 @@ from typing import Any
 
 from rsi.core.errors import AdapterError, ConfigError
 from rsi.core.interfaces import SampleFilter
-from rsi.core.jsonio import stable_hash
+from rsi.core.jsonio import read_jsonl, stable_hash
 from rsi.core.registry import register
 from rsi.core.scoring import normalize_text, score_text
 from rsi.core.types import ChatMessage, ChatRequest, DataSample, FilterBatch, FilterDecision
@@ -196,6 +196,96 @@ class DedupFilter(SampleFilter):
                 self._grams.pop(0)
             batch.kept.append(sample)
             batch.decisions.append(FilterDecision(sample.id, True, "dedup"))
+        return batch
+
+
+@register("data_filter", "benchmark_leakage")
+class BenchmarkLeakageFilter(SampleFilter):
+    """Drop samples that reproduce a configured benchmark prompt.
+
+    Prompts are loaded from ``paths`` and, when ``include_configured`` is true,
+    from every file-backed entry under ``benchmark.benchmarks``. Matching uses a
+    normalized prompt hash plus n-gram similarity, so a paraphrased benchmark
+    row is also rejected.
+    """
+
+    def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
+        super().__init__(runtime, cfg, **params)
+        self.paths = [str(value) for value in self.cfg.get_list("paths", [])]
+        self.names = [str(value) for value in self.cfg.get_list("benchmarks", [])]
+        self.include_configured = self.cfg.get_bool("include_configured", True)
+        self.ngram = self.cfg.get_int("ngram", 3)
+        self.threshold = self.cfg.get_float("threshold", 0.9)
+        self.max_index = self.cfg.get_int("max_index", 20000)
+        if not 0 <= self.threshold <= 1:
+            raise ValueError("benchmark_leakage.threshold must be within [0, 1]")
+        if self.ngram < 1 or self.max_index < 0:
+            raise ValueError("benchmark_leakage.ngram must be positive and max_index non-negative")
+        self._loaded = False
+        self._exact: set[str] = set()
+        self._prompts: list[tuple[str, set[tuple[str, ...]]]] = []
+        self._sources: list[str] = []
+
+    def _benchmark_paths(self) -> list[Path]:
+        paths = [self.runtime.path(value) for value in self.paths]
+        if self.include_configured:
+            entries = self.runtime.config.get("benchmark.benchmarks", {}) or {}
+            if isinstance(entries, dict):
+                for name, entry in entries.items():
+                    if self.names and str(name) not in self.names:
+                        continue
+                    if isinstance(entry, dict) and entry.get("path"):
+                        paths.append(self.runtime.path(str(entry["path"])))
+        return paths
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        for path in self._benchmark_paths():
+            if not path.exists():
+                self.logger.warning("benchmark leakage source is missing: %s", path)
+                continue
+            self._sources.append(str(path))
+            for row in read_jsonl(path):
+                prompt = _benchmark_prompt(row)
+                if not prompt:
+                    continue
+                normalized = normalize_text(prompt)
+                key = stable_hash("benchmark", normalized, length=24)
+                if key in self._exact:
+                    continue
+                self._exact.add(key)
+                self._prompts.append((key, _ngrams(normalized, self.ngram)))
+                if len(self._prompts) >= self.max_index:
+                    return
+
+    def filter(self, samples: list[DataSample], context: Any) -> FilterBatch:
+        self._load()
+        batch = FilterBatch()
+        for sample in samples:
+            normalized = normalize_text(sample.prompt)
+            key = stable_hash("benchmark", normalized, length=24)
+            matched = key if key in self._exact else ""
+            if not matched:
+                grams = _ngrams(normalized, self.ngram)
+                for other_id, other in self._prompts:
+                    if _jaccard(grams, other) >= self.threshold:
+                        matched = other_id
+                        break
+            if matched:
+                batch.dropped.append(sample)
+                batch.decisions.append(
+                    FilterDecision(sample.id, False, "benchmark_leakage", f"matches benchmark {matched}")
+                )
+            else:
+                batch.kept.append(sample)
+                batch.decisions.append(FilterDecision(sample.id, True, "benchmark_leakage"))
+        batch.stats = {
+            "sources": list(self._sources),
+            "benchmark_prompts": len(self._prompts),
+            "dropped": len(batch.dropped),
+        }
         return batch
 
 
@@ -490,6 +580,18 @@ class FilterPipeline:
             "dropped": len(samples) - len(current),
         }
         return current, decisions, stats
+
+
+def _benchmark_prompt(row: dict[str, Any]) -> str:
+    prompt = str(row.get("prompt") or row.get("question") or "")
+    if prompt:
+        return prompt
+    messages = row.get("messages")
+    if isinstance(messages, list):
+        for message in reversed(messages):
+            if isinstance(message, dict) and str(message.get("content") or "").strip():
+                return str(message["content"])
+    return ""
 
 
 def _ngrams(text: str, n: int) -> set[tuple[str, ...]]:

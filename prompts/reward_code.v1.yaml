@@ -1,0 +1,33 @@
+id: reward_code
+version: 1
+description: Write a Python reward function for a capability the model still misses.
+variables: [capability, severity, dataset_id, sample_prompts]
+system: |
+  You are a reward engineer. Write a small, deterministic Python function that
+  scores a response against a reference. Return JSON only.
+template: |
+  Dataset: {{dataset_id}}
+  Capability: {{capability}}
+  Defect severity: {{severity}}
+
+  Example rows:
+  {{sample_prompts}}
+
+  Requirements:
+  - The module defines `compute_score(response, reference, **kwargs) -> float`.
+  - Return a score in [0, 1]; do not mutate global state.
+  - Prefer exact or normalized matching, then numeric comparison, then regex.
+  - Keep the function self-contained; import only the standard library.
+
+  Return {"code": "<python module text>", "entrypoint": "compute_score",
+          "language": "python"}.
+schema:
+  type: object
+  required: [code]
+  properties:
+    code:
+      type: string
+    entrypoint:
+      type: string
+    language:
+      type: string

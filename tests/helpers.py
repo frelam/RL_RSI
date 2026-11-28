@@ -34,6 +34,12 @@ _LLM_FIXTURES = {
             {"capability": "code.debugging", "kind": "text", "count": 2, "seeds": ["debugging"]}
         ]
     },
+    "reward_code": {
+        "code": "def compute_score(response, reference, **kwargs):\n"
+                "    return 1.0 if str(response).strip() == str(reference).strip() else 0.0\n",
+        "entrypoint": "compute_score",
+        "language": "python",
+    },
     "badcase_analysis": {
         "defects": [
             {

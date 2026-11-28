@@ -49,6 +49,7 @@ class StrategyReview:
     longtail_gap: float
     gap_tolerance: float
     longtail_gap_tolerance: float
+    deficits: dict[str, float] = field(default_factory=dict)
     iterations: list[dict[str, Any]] = field(default_factory=list)
     added: list[str] = field(default_factory=list)
     reason: str = ""
@@ -60,6 +61,7 @@ class StrategyReview:
             "longtail_gap": self.longtail_gap,
             "gap_tolerance": self.gap_tolerance,
             "longtail_gap_tolerance": self.longtail_gap_tolerance,
+            "deficits": dict(self.deficits),
             "iterations": list(self.iterations),
             "added": list(self.added),
             "reason": self.reason,
@@ -383,6 +385,7 @@ def refine_strategy(
         longtail_gap=final["longtail_gap"],
         gap_tolerance=gap_tolerance,
         longtail_gap_tolerance=longtail_gap_tolerance,
+        deficits=dict(final["deficits"]),
         iterations=iterations,
         added=added,
         reason=reason,
@@ -527,6 +530,7 @@ class DataStrategyPlanner(Component):
                 longtail_gap=0.0,
                 gap_tolerance=self.gap_tolerance,
                 longtail_gap_tolerance=self.longtail_gap_tolerance,
+                deficits=dict(target.distribution),
                 reason="no target distribution" if not target.distribution else "empty data budget",
             )
         else:

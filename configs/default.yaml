@@ -191,6 +191,9 @@ data:
       max_rework: 2             # add-datasets -> re-optimize cycles
       add_per_round: 2
       impact_weight: 1.0        # penalty for touching already-covered abilities
+      synthesize: true          # LLM fallback when no dataset covers a remaining deficit
+      collector: text           # collector used for the fallback
+      synthesis_max: 128        # cap on fallback samples per round
   # Reuse prior train.jsonl rows only. Validation rows are never replayed.
   replay:
     enabled: true
@@ -272,6 +275,10 @@ data:
         min_prompt_chars: 8
         max_prompt_chars: 12000
         max_response_chars: 16000
+      - type: benchmark_leakage
+        include_configured: true     # load prompts from file-backed benchmark entries
+        # paths: [examples/benchmark_math.jsonl]
+        threshold: 0.9               # n-gram similarity that counts as a leak
       - type: judge_quality
         prompt: sample_quality
         profile: judge
@@ -336,6 +343,12 @@ data:
     reward:
       default: {type: rule, name: contains, weight: 1.0}
       by_capability: {}
+      defect_boost: 1.0         # >1 raises the reward weight of chapter-1 defects
+      codegen:
+        enabled: false          # let an LLM agent write a reward module per defect
+        profile: generator
+        prompt: reward_code
+        max_capabilities: 2
 
 # --------------------------------------------------------------------- training
 train:
@@ -496,6 +509,12 @@ llm:
               count: 4
               target_difficulty: [0.3, 0.85]
               seeds: [needle in a haystack, multi-document QA]
+        reward_code:
+          code: |
+            def compute_score(response, reference, **kwargs):
+                return 1.0 if str(response).strip() == str(reference).strip() else 0.0
+          entrypoint: compute_score
+          language: python
         knowledge_qa:
           samples:
             - prompt: >-

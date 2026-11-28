@@ -61,6 +61,7 @@ class DataContext:
     dataset_selection: Any = None
     strategy: DatasetStrategy | None = None
     data_strategy: dict[str, Any] | None = None
+    synthesis: dict[str, Any] = field(default_factory=dict)
     mixing_info: dict[str, Any] = field(default_factory=dict)
     mixing_groups: set[str] | None = None
     sampler_stats: dict[str, Any] = field(default_factory=dict)
@@ -168,6 +169,11 @@ class DataPipeline:
             self.cfg.section("strategy", required=False),
             default_count=self.max_generated,
         )
+        self.strategy_synthesize = self.cfg.get_bool("strategy.review.synthesize", True)
+        self.strategy_synthesis_collector = str(self.cfg.get("strategy.review.collector", "text"))
+        self.strategy_synthesis_max = self.cfg.get_int("strategy.review.synthesis_max", 128)
+        if self.strategy_synthesis_max < 0:
+            raise ConfigError("data.strategy.review.synthesis_max must be non-negative")
         self.save_intermediate = self.cfg.get_bool("save_intermediate", False)
         self.replay_cfg = self.cfg.section("replay", required=False)
         self.replay_fraction = self.replay_cfg.get_float("fraction", 0.0)
@@ -302,10 +308,33 @@ class DataPipeline:
         new_samples: list[DataSample] = []
         errors: list[str] = []
         generated_per_request: dict[str, int] = {}
+        synthesis: dict[str, Any] = {}
         if strategy is not None:
-            new_samples, errors, generated_per_request = self._collect_strategy(
+            new_samples, errors, generated_per_request, synthesis = self._collect_strategy(
                 strategy, context, difficulty_shift, reward_multiplier
             )
+            context.synthesis = synthesis
+            if not strategy.review.accepted and not synthesis.get("generated"):
+                reason = "strategy review rejected and no synthetic data filled the gap"
+                result = DataPipelineResult(
+                    round=round_no,
+                    plan=plan,
+                    dataset=None,
+                    generated=0,
+                    filtered=0,
+                    selected=0,
+                    errors=errors + [reason],
+                    stats={
+                        "skipped": reason,
+                        "strategy": context.data_strategy or {},
+                        "strategy_accepted": False,
+                        "synthesis": synthesis,
+                        "target_distribution": context.target_distribution,
+                        "dataset_selection": _selection_summary(strategy.selection),
+                    },
+                )
+                atomic_write_json(work_dir / "pipeline.json", result)
+                return result
         else:
             for request in plan.requests:
                 if len(new_samples) >= self.max_generated:
@@ -356,6 +385,18 @@ class DataPipeline:
             sample.difficulty = self.grader.grade(sample, context)
         weights = self.mixer.plan(kept, plan, context)
         context.mixing_info = dict(getattr(self.mixer, "last_info", {}) or {})
+        if strategy is not None and context.target_distribution:
+            target_weights = {
+                group_key(sample): float(context.target_distribution.get(sample.capability, 0.0))
+                for sample in kept
+            }
+            if any(value > 0 for value in target_weights.values()):
+                weights = target_weights
+                context.mixing_info = {
+                    "strategy": "target_distribution",
+                    "weights": target_weights,
+                    "mixer": context.mixing_info,
+                }
         selected, sampler_stats = self.sampler.select(kept, weights, context)
         context.sampler_stats = sampler_stats
         if self.save_intermediate:
@@ -369,6 +410,7 @@ class DataPipeline:
             "new_by_capability": _capability_counts(new_samples),
             "replay_by_capability": _capability_counts(replay_samples),
             "selected_by_capability": _capability_counts(selected),
+            "synthesis": synthesis,
         }
         if dataset is not None:
             dataset.mixing = weights
@@ -382,6 +424,7 @@ class DataPipeline:
                     "replay": replay_info,
                     "merge": merge_info,
                     "data_strategy": context.data_strategy,
+                    "synthesis": synthesis,
                 }
             )
             if strategy is not None:
@@ -411,6 +454,8 @@ class DataPipeline:
                 "replay": replay_info,
                 "merge": merge_info,
                 "strategy": context.data_strategy or {},
+                "strategy_accepted": strategy.review.accepted if strategy is not None else None,
+                "synthesis": synthesis,
                 "dataset_selection": _selection_summary(strategy.selection) if strategy is not None else {},
             },
         )
@@ -427,22 +472,29 @@ class DataPipeline:
         context: DataContext,
         difficulty_shift: float | dict[str, float],
         reward_multiplier: float,
-    ) -> tuple[list[DataSample], list[str], dict[str, int]]:
-        """Step 4: load the selected datasets, take each ratio's rows, and mix."""
+    ) -> tuple[list[DataSample], list[str], dict[str, int], dict[str, Any]]:
+        """Step 4: load the selected datasets, take each ratio's rows, and mix.
+
+        When the review rejects the mix, an LLM collector fills the remaining
+        deficits. If that fallback yields nothing, the returned samples are
+        empty and the caller skips materialization.
+        """
         count = max(0, int(strategy.count))
         quotas = allocate_quotas(strategy.selection.ratios, count)
         errors: list[str] = []
         generated: dict[str, int] = {}
         sources: list[tuple[Any, list[DataSample]]] = []
+        dataset_collector = next(
+            (
+                item
+                for item in self.collectors.values()
+                if getattr(item, "kind", "") == "dataset" and hasattr(item, "load_dataset")
+            ),
+            None,
+        )
         for dataset in strategy.selection.datasets:
             quota = quotas.get(dataset.name, 0)
             if quota <= 0:
-                continue
-            try:
-                rows = fetch_dataset_rows(dataset, self.runtime.repo_root)
-            except Exception as exc:  # noqa: BLE001 - other sources can still serve the mix
-                self.runtime.logger.warning("strategy dataset %s failed: %s", dataset.name, exc)
-                errors.append(f"{dataset.name}: {exc}")
                 continue
             capability = _dominant_ability(dataset)
             request = DataRequest(
@@ -456,12 +508,27 @@ class DataPipeline:
                     "verifier": self.runtime.catalog.verifier(capability),
                 },
             )
-            usable = rows_to_samples(dataset, rows, request, len(rows))
+            try:
+                if dataset_collector is not None and hasattr(dataset_collector, "load_dataset"):
+                    usable = dataset_collector.load_dataset(dataset, request)
+                else:
+                    rows = fetch_dataset_rows(dataset, self.runtime.repo_root)
+                    usable = rows_to_samples(dataset, rows, request, len(rows))
+            except Exception as exc:  # noqa: BLE001 - other sources can still serve the mix
+                self.runtime.logger.warning("strategy dataset %s failed: %s", dataset.name, exc)
+                errors.append(f"{dataset.name}: {exc}")
+                continue
             sources.append((dataset, usable))
             generated[dataset.name] = len(usable)
         samples, _source_counts = fill_dataset_quotas(sources, count, quotas)
         samples.sort(key=lambda sample: (str(sample.metadata.get("dataset", "")), sample.id))
         samples = samples[:count]
+        synthesis: dict[str, Any] = {"enabled": self.strategy_synthesize}
+        if not strategy.review.accepted:
+            synthesized, synthesis = self._synthesize_deficits(strategy, context, errors)
+            synthesis["used"] = True
+            if synthesized:
+                samples = self._merge_synthesized(samples, synthesized, count, strategy)
         shifts = difficulty_shift if isinstance(difficulty_shift, dict) else {}
         for sample in samples:
             shift = (
@@ -474,7 +541,115 @@ class DataPipeline:
             reward_hint = dict(sample.metadata.get("reward_hint") or {})
             reward_hint["weight"] = float(reward_hint.get("weight", 1.0)) * reward_multiplier
             sample.metadata["reward_hint"] = reward_hint
-        return samples, errors, generated
+        return samples, errors, generated, synthesis
+
+    def _synthesize_deficits(
+        self,
+        strategy: DatasetStrategy,
+        context: DataContext,
+        errors: list[str],
+    ) -> tuple[list[DataSample], dict[str, Any]]:
+        """LLM fallback: synthesize rows for the target abilities still missing."""
+        info: dict[str, Any] = {
+            "enabled": self.strategy_synthesize,
+            "collector": self.strategy_synthesis_collector,
+            "requested": 0,
+            "generated": 0,
+            "by_capability": {},
+            "errors": [],
+        }
+        deficits = {
+            name: float(value)
+            for name, value in strategy.review.deficits.items()
+            if float(value) > 1e-9
+        }
+        if not self.strategy_synthesize or not deficits:
+            return [], info
+        collector = self.collectors.get(self.strategy_synthesis_collector)
+        if collector is None:
+            collector = next(
+                (
+                    item
+                    for item in self.collectors.values()
+                    if getattr(item, "kind", "") == self.strategy_synthesis_collector
+                ),
+                None,
+            )
+        if collector is None:
+            info["reason"] = f"collector {self.strategy_synthesis_collector!r} is not configured"
+            info["errors"].append(info["reason"])
+            errors.append(f"strategy synthesis: {info['reason']}")
+            return [], info
+        if getattr(collector, "kind", "") == "dataset":
+            info["reason"] = "a dataset collector cannot synthesize rows"
+            info["errors"].append(info["reason"])
+            errors.append(f"strategy synthesis: {info['reason']}")
+            return [], info
+        total = min(
+            self.strategy_synthesis_max,
+            int(math.ceil(strategy.count * sum(deficits.values()))),
+        )
+        total = max(0, min(total, strategy.count))
+        quotas = allocate_quotas(deficits, total)
+        info["requested"] = total
+        samples: list[DataSample] = []
+        for capability, quota in sorted(quotas.items()):
+            if quota <= 0:
+                continue
+            request = DataRequest(
+                id=stable_hash("strategy-synthesis", context.round, capability),
+                capability=capability,
+                kind=str(getattr(collector, "kind", self.strategy_synthesis_collector)),
+                count=quota,
+                target_difficulty=list(self.planner.default_difficulty),
+                constraints={
+                    "strategy": "synthesis_fallback",
+                    "source_round": context.round,
+                    "verifier": self.runtime.catalog.verifier(capability),
+                },
+                seeds=list(self.runtime.catalog.seeds(capability)),
+                reward_hint=self.runtime.catalog.reward(capability),
+                notes=f"Synthesize {capability} rows to close the target-distribution gap",
+            )
+            try:
+                produced = collector.collect(request, context)[:quota]
+            except Exception as exc:  # noqa: BLE001 - keep the remaining capabilities
+                self.runtime.logger.warning(
+                    "strategy synthesis failed for %s: %s", capability, exc
+                )
+                info["errors"].append(f"{capability}: {exc}")
+                errors.append(f"strategy synthesis/{capability}: {exc}")
+                continue
+            for sample in produced:
+                sample.metadata["synthesis_fallback"] = True
+            samples.extend(produced)
+            info["by_capability"][capability] = len(produced)
+        info["generated"] = len(samples)
+        return samples, info
+
+    def _merge_synthesized(
+        self,
+        dataset_samples: list[DataSample],
+        synthesized: list[DataSample],
+        count: int,
+        strategy: DatasetStrategy,
+    ) -> list[DataSample]:
+        """Keep the round total at ``count`` by dropping over-covered dataset rows."""
+        overflow = len(dataset_samples) + len(synthesized) - count
+        if overflow <= 0:
+            return dataset_samples + synthesized
+        excess = strategy.selection.stats.get("excess") or {}
+        ordered = sorted(
+            dataset_samples,
+            key=lambda sample: (
+                0 if float(excess.get(sample.capability, 0.0)) > 0 else 1,
+                sample.capability,
+                sample.id,
+            ),
+        )
+        dropped = {id(sample) for sample in ordered[:overflow]}
+        kept = [sample for sample in dataset_samples if id(sample) not in dropped]
+        return (kept + synthesized)[:count]
 
     def _load_replay(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,8 +10,9 @@ from rsi.core.config import Config
 from rsi.core.types import ChatResponse, DataSample
 from rsi.modules.data_difficulty import RolloutDifficultyGrader, RuleDifficultyGrader
 from rsi.modules.data_filters import (
-    DedupFilter,
     AdaptiveRolloutFilter,
+    BenchmarkLeakageFilter,
+    DedupFilter,
     FilterPipeline,
     FormatFilter,
     JudgeQualityFilter,
@@ -76,6 +78,30 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(len(second.kept), 0)
         third = dedup.filter([make_sample("c", prompt="A completely different prompt about matrices.")], self.ctx)
         self.assertEqual(len(third.kept), 1)
+
+    def test_benchmark_leakage_drops_exact_and_near_duplicates(self) -> None:
+        path = Path(self.temp.name) / "benchmark.jsonl"
+        path.write_text(
+            json.dumps({"prompt": "What is 17 * 23?"}) + "\n"
+            + json.dumps({"messages": [{"role": "user", "content": "Name the capital of France."}]}) + "\n",
+            encoding="utf-8",
+        )
+        leakage = BenchmarkLeakageFilter(
+            self.runtime,
+            cfg({"paths": [str(path)], "threshold": 0.9, "include_configured": False}),
+        )
+        samples = [
+            make_sample("exact", prompt="What is 17 * 23?"),
+            make_sample("near", prompt="What is 17 * 23 ?"),
+            make_sample("messages", prompt="Name the capital of France."),
+            make_sample("clean", prompt="Derive the quadratic formula from first principles."),
+        ]
+
+        batch = leakage.filter(samples, self.ctx)
+
+        self.assertEqual([sample.id for sample in batch.kept], ["clean"])
+        self.assertEqual(len(batch.dropped), 3)
+        self.assertTrue(all(decision.filter == "benchmark_leakage" for decision in batch.decisions))
 
     def test_judge_quality_sets_score(self) -> None:
         judge = JudgeQualityFilter(

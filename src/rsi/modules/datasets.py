@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import importlib
 import json
 import math
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import yaml
@@ -417,39 +418,102 @@ def merge_ability_priorities(
     return output
 
 
+#: Built-in and user-defined row loaders, keyed by the registry ``loader`` value.
+_DATASET_LOADERS: dict[str, Callable[[DatasetSpec, Path], list[dict[str, Any]]]] = {}
+
+
+def register_dataset_loader(name: str):
+    """Decorator that registers a dataset row loader.
+
+    A private dataset can name a registered loader or a dotted callable
+    (``module:function``) in its registry entry, without editing this module.
+    """
+
+    def decorator(func: Callable[[DatasetSpec, Path], list[dict[str, Any]]]):
+        _DATASET_LOADERS[name] = func
+        return func
+
+    return decorator
+
+
+def dataset_loader_names() -> list[str]:
+    return sorted(_DATASET_LOADERS)
+
+
+def _import_dataset_loader(path: str) -> Callable[[DatasetSpec, Path], list[dict[str, Any]]]:
+    module_name, _, attr = path.partition(":")
+    if not attr:
+        module_name, _, attr = path.rpartition(".")
+    if not module_name or not attr:
+        raise ConfigError(f"Invalid dataset loader path: {path!r}")
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        raise ConfigError(f"Cannot import dataset loader module {module_name!r}: {exc}") from exc
+    func = getattr(module, attr, None)
+    if not callable(func):
+        raise ConfigError(f"Dataset loader {path!r} is not a callable")
+    return func
+
+
 def fetch_dataset_rows(spec: DatasetSpec, root: str | Path) -> list[dict[str, Any]]:
-    """Fetch rows through a source-specific adapter with optional dependencies."""
-    if spec.loader == "synthetic":
-        rows = list(spec.rows)
-    elif spec.loader == "jsonl":
-        path = _resolve_path(spec, root)
-        rows = read_jsonl(path)
-    elif spec.loader == "parquet":
-        try:
-            import pyarrow.parquet as pq
-        except ImportError as exc:
-            raise AdapterError("Parquet datasets require the optional 'pyarrow' package") from exc
-        rows = pq.read_table(_resolve_path(spec, root)).to_pylist()
-    elif spec.loader == "web":
-        if not spec.url:
-            raise ConfigError(f"Web dataset {spec.name!r} requires url")
-        with urllib.request.urlopen(spec.url, timeout=30) as response:
-            payload = response.read().decode("utf-8")
-        if spec.url.lower().split("?", 1)[0].endswith(".json"):
-            value = json.loads(payload)
-            rows = value if isinstance(value, list) else value.get("data", [])
-        else:
-            rows = [json.loads(line) for line in payload.splitlines() if line.strip()]
-    elif spec.loader == "huggingface":
-        try:
-            from datasets import load_dataset
-        except ImportError as exc:
-            raise AdapterError("Hugging Face datasets require the optional 'datasets' package") from exc
-        dataset = load_dataset(spec.url, spec.config, split=spec.split)
-        rows = [dict(row) for row in dataset]
-    else:
-        raise ConfigError(f"Unknown dataset loader {spec.loader!r} for {spec.name!r}")
+    """Fetch rows through a registered or dotted-path loader.
+
+    Built-in loaders cover ``jsonl``, ``parquet``, ``web``, ``huggingface`` and
+    ``synthetic``. A registry entry may also name ``package.module:function``;
+    the callable receives ``(spec, root)`` and returns row mappings.
+    """
+    loader = _DATASET_LOADERS.get(spec.loader)
+    if loader is None:
+        if ":" not in spec.loader and "." not in spec.loader:
+            available = ", ".join(dataset_loader_names())
+            raise ConfigError(
+                f"Unknown dataset loader {spec.loader!r} for {spec.name!r}; available: {available}"
+            )
+        loader = _import_dataset_loader(spec.loader)
+    rows = loader(spec, Path(root))
     return [_adapt_verl_row(row) for row in rows if isinstance(row, dict)]
+
+
+@register_dataset_loader("synthetic")
+def _load_synthetic_rows(spec: DatasetSpec, root: Path) -> list[dict[str, Any]]:
+    return list(spec.rows)
+
+
+@register_dataset_loader("jsonl")
+def _load_jsonl_rows(spec: DatasetSpec, root: Path) -> list[dict[str, Any]]:
+    return read_jsonl(_resolve_path(spec, root))
+
+
+@register_dataset_loader("parquet")
+def _load_parquet_rows(spec: DatasetSpec, root: Path) -> list[dict[str, Any]]:
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise AdapterError("Parquet datasets require the optional 'pyarrow' package") from exc
+    return pq.read_table(_resolve_path(spec, root)).to_pylist()
+
+
+@register_dataset_loader("web")
+def _load_web_rows(spec: DatasetSpec, root: Path) -> list[dict[str, Any]]:
+    if not spec.url:
+        raise ConfigError(f"Web dataset {spec.name!r} requires url")
+    with urllib.request.urlopen(spec.url, timeout=30) as response:
+        payload = response.read().decode("utf-8")
+    if spec.url.lower().split("?", 1)[0].endswith(".json"):
+        value = json.loads(payload)
+        return value if isinstance(value, list) else value.get("data", [])
+    return [json.loads(line) for line in payload.splitlines() if line.strip()]
+
+
+@register_dataset_loader("huggingface")
+def _load_huggingface_rows(spec: DatasetSpec, root: Path) -> list[dict[str, Any]]:
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:
+        raise AdapterError("Hugging Face datasets require the optional 'datasets' package") from exc
+    dataset = load_dataset(spec.url, spec.config, split=spec.split)
+    return [dict(row) for row in dataset]
 
 
 def _adapt_verl_row(row: dict[str, Any]) -> dict[str, Any]:

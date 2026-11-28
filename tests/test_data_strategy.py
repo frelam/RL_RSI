@@ -5,9 +5,13 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 
 from rsi.cli import main
+from rsi.core.config import Config
 from rsi.core.jsonio import read_json
+from rsi.core.types import DataPlan, DataSample, Defect, DefectReport
+from rsi.modules.data_builder import JsonlDatasetBuilder
 from rsi.modules.data_strategy import (
     adjust_target_distribution,
     choose_fill_datasets,
@@ -15,7 +19,7 @@ from rsi.modules.data_strategy import (
     strategy_gap,
 )
 from rsi.modules.datasets import DatasetSpec, select_datasets
-from tests.helpers import REPO_ROOT
+from tests.helpers import REPO_ROOT, FakeRuntime
 
 
 def _dataset(name: str, abilities: dict[str, float], rows: int = 0) -> DatasetSpec:
@@ -188,6 +192,105 @@ class StrategyLoopTests(unittest.TestCase):
                 manifest["stats"]["sources"].get("dataset:math_word_problems", 0), 0
             )
             self.assertIn("data_strategy", manifest["stats"])
+            self.assertFalse(first["synthesize"]["strategy_accepted"])
+            self.assertGreater(first["synthesize"]["synthesis"]["generated"], 0)
+            self.assertIn("synthesis", manifest["stats"])
+
+    def test_review_rejection_skips_materialization_without_synthesis(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            config = Path(td) / "strategy.yaml"
+            config.write_text(
+                f"include: [{(REPO_ROOT / 'configs' / 'default.yaml').as_posix()}]\n"
+                "stop:\n  policies:\n    - {type: max_rounds, max_rounds: 1}\n"
+                "data:\n  strategy:\n    enabled: true\n    count: 12\n"
+                "    review:\n      synthesize: false\n"
+                "    task:\n      id: reasoning\n"
+                "      abilities: {math.reasoning: 0.6, code.debugging: 0.4}\n"
+                "      datasets: [math_word_problems, code_debugging]\n",
+                encoding="utf-8",
+            )
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "rejected",
+                     "--runs-dir", td, "--quiet"]
+                )
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            state = read_json(Path(td) / "rejected" / "state.json")
+            synthesize = state["history"][0]["synthesize"]
+            self.assertIsNone(synthesize["dataset_id"])
+            self.assertFalse(synthesize["strategy_accepted"])
+            self.assertTrue(
+                any("review rejected" in error for error in synthesize["errors"]),
+                synthesize["errors"],
+            )
+
+
+class RewardEnhancementTests(unittest.TestCase):
+    def test_defect_boost_and_generated_reward_code(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            runtime = FakeRuntime(
+                td,
+                config=Config(
+                    {"llm": {"default_profile": "generator"}, "run": {"seed": 7}},
+                    config_dir=REPO_ROOT,
+                    repo_root=REPO_ROOT,
+                ),
+            )
+            builder = JsonlDatasetBuilder(
+                runtime,
+                Config(
+                    {
+                        "val_ratio": 0.0,
+                        "reward": {
+                            "default": {"type": "rule", "name": "contains", "weight": 1.0},
+                            "defect_boost": 2.0,
+                            "codegen": {"enabled": True, "prompt": "reward_code"},
+                        },
+                    },
+                    config_dir=REPO_ROOT,
+                    repo_root=REPO_ROOT,
+                ),
+            )
+            report = DefectReport(
+                round=0,
+                checkpoint_id="c",
+                defects=[
+                    Defect(
+                        id="d1",
+                        capability="code.debugging",
+                        description="off-by-one",
+                        severity=0.8,
+                        confidence=1.0,
+                        source="test",
+                    )
+                ],
+            )
+            context = SimpleNamespace(
+                round=0,
+                work_dir=Path(td),
+                defects=report,
+                data_strategy=None,
+                sampler_stats={},
+                mixing_info={},
+            )
+            sample = DataSample(
+                id="s1",
+                kind="text",
+                capability="code.debugging",
+                prompt="fix the loop",
+                response="return a + b",
+                group="code.debugging",
+                metadata={"reward_hint": {"type": "rule", "name": "contains", "weight": 1.0}},
+            )
+
+            dataset = builder.build([sample], context, DataPlan(round=0), {"code.debugging": 1.0})
+            spec = read_json(Path(dataset.reward_spec_path))
+            rule = spec["by_capability"]["code.debugging"]
+
+            self.assertAlmostEqual(rule["weight"], 1.8)
+            self.assertTrue(Path(rule["code_path"]).exists())
+            self.assertIn("compute_score", Path(rule["code_path"]).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

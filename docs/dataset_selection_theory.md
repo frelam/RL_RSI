@@ -87,7 +87,9 @@ $$
 \text{score}_i=\text{fill}_i-w_{\text{impact}}\,\text{impact}_i,
 $$
 
-where $\delta_a$ is the remaining deficit and $D$ the deficient set. The best `add_per_round` datasets join the candidate set, and the optimizer runs again, up to `max_rework` times. If no unused dataset covers a remaining deficit, the review stops and reports the ability as uncovered.
+where $\delta_a$ is the remaining deficit and $D$ the deficient set. The best `add_per_round` datasets join the candidate set, and the optimizer runs again, up to `max_rework` times.
+
+When no unused dataset covers a remaining deficit, the reviewer records the deficit and lets the materializer fill it. If `data.strategy.review.synthesize` is on, the configured collector (default `text`) generates at most `synthesis_max` rows for the deficient abilities, and those rows join the dataset mix. The round total is kept at the strategy count by dropping over-covered dataset rows first. If synthesis is off or yields no rows, the round is marked rejected and no dataset is materialized, so a mix that cannot reach its target is not trained on silently.
 
 ## Integer quotas
 
@@ -133,6 +135,7 @@ rows, capped by `max_samples` and by the rows found in the last `recent_rounds` 
 | `data.strategy.optimize.diversity_weight`, `diversity_threshold`, `diversity_floor` | `0.1`, `0.05`, `0.01` | Diversity trade-off $\gamma$, coverage needed to count an ability, minimum batch share per covered ability. |
 | `data.strategy.review.gap_tolerance`, `longtail_gap_tolerance` | `0.05`, `0.01` | Accepted target shortfall, ordinary and long-tail. |
 | `data.strategy.review.max_rework`, `add_per_round`, `impact_weight` | `2`, `2`, `1.0` | Add-and-reoptimize cycles, datasets added per cycle, collateral-coverage penalty. |
+| `data.strategy.review.synthesize`, `collector`, `synthesis_max` | `true`, `text`, `128` | LLM fallback for uncovered deficits, its collector, and its row cap. |
 | `data.plan.count_per_defect`, `min_count`, `max_count` | `4`, `2`, `6` | Request count before the `task.count` cap. |
 | `data.replay.fraction`, `max_samples`, `recent_rounds` | `0.2`, `128`, `1` | Replay target and its caps. |
 | `data.replay.strategy` | `target` | `uniform` shuffle or `target` capability allocation. |

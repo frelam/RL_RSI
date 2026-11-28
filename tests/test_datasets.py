@@ -17,6 +17,7 @@ from rsi.modules.datasets import (
     fill_dataset_quotas,
     merge_ability_priorities,
     preprocess_row,
+    register_dataset_loader,
     rows_to_samples,
     select_datasets,
 )
@@ -164,6 +165,19 @@ class DatasetTests(unittest.TestCase):
             path.write_text("datasets:\n  a:\n    preprocess: {steps: drop_empty}\n", encoding="utf-8")
             with self.assertRaises(Exception):
                 DatasetCatalog(path)
+
+    def test_custom_dataset_loader_can_be_registered(self) -> None:
+        calls = []
+
+        @register_dataset_loader("test_custom_loader")
+        def load(spec: DatasetSpec, root: Path) -> list[dict]:
+            calls.append((spec.name, root))
+            return [{"question": f"{spec.name} question", "answer": "a"}]
+
+        rows = fetch_dataset_rows(DatasetSpec("custom", "test_custom_loader"), REPO_ROOT)
+
+        self.assertEqual(rows, [{"question": "custom question", "answer": "a"}])
+        self.assertEqual(calls, [("custom", REPO_ROOT)])
 
     def test_priority_merge_uses_available_sources_and_configured_weights(self) -> None:
         merged = merge_ability_priorities(

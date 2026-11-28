@@ -435,6 +435,13 @@ class DatasetLibraryCollector(DataCollector):
         self.catalog = DatasetCatalog(catalog_path, runtime.repo_root)
         self.max_datasets = max(1, self.cfg.get_int("max_datasets", 4))
 
+    def load_dataset(
+        self, dataset: DatasetSpec, request: DataRequest, limit: int | None = None
+    ) -> list[DataSample]:
+        """Load one named source; used by the chapter-2 strategy materializer."""
+        rows = fetch_dataset_rows(dataset, self.runtime.repo_root)
+        return rows_to_samples(dataset, rows, request, len(rows) if limit is None else limit)
+
     def collect(self, request: DataRequest, context: Any) -> list[DataSample]:
         priority = self.runtime.catalog.priority(request.capability)
         selection = self._joint_selection(request, context)
