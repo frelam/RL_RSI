@@ -8,7 +8,7 @@
 #   preprocess    {pipeline: script(s) that turn the download into `path`, steps: load-time steps}
 # Optional: license, priority (0 to 1, how ready the local rows are), source (keep only
 # the rows of this dataset when `path` mixes several), config and split (huggingface
-# loader). Remote sources should be pinned and license-reviewed.
+# loader), ref (github loader). Remote sources should be pinned and license-reviewed.
 #
 # Entries with local rows are active. A file-backed entry without `path` (nothing
 # downloaded yet) is declared only and is skipped when datasets are selected.
@@ -496,3 +496,15 @@ datasets:
     reward: {type: rule, name: numeric, weight: 1.0}
     reward_code: src/rsi/core/scoring.py::score_text (numeric)
     preprocess: [normalize_chat, strip_text, drop_empty]
+
+  # GitHub repository; reads JSON, JSONL or CSV. `path` is a file or directory
+  # inside the repo and `ref` a branch or tag. Set GITHUB_TOKEN for rate limits.
+  # github_math:
+  #   loader: github
+  #   url: owner/repo
+  #   ref: main
+  #   path: data/math
+  #   abilities: {math.reasoning: 0.7}
+  #   reward: {type: rule, name: numeric, weight: 1.0}
+  #   reward_code: src/rsi/core/scoring.py::score_text (numeric)
+  #   preprocess: [normalize_chat, strip_text, drop_empty]

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import json
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -178,6 +180,55 @@ class DatasetTests(unittest.TestCase):
 
         self.assertEqual(rows, [{"question": "custom question", "answer": "a"}])
         self.assertEqual(calls, [("custom", REPO_ROOT)])
+
+    def test_github_loader_reads_jsonl_and_csv_files_from_a_directory(self) -> None:
+        listing = [
+            {
+                "type": "file",
+                "path": "data/a.jsonl",
+                "download_url": "https://raw.githubusercontent.com/o/r/main/data/a.jsonl",
+            },
+            {
+                "type": "file",
+                "path": "data/b.csv",
+                "download_url": "https://raw.githubusercontent.com/o/r/main/data/b.csv",
+            },
+        ]
+
+        def fake_get(url: str) -> bytes:
+            if "api.github.com" in url:
+                self.assertIn("/contents/data", url)
+                return json.dumps(listing).encode("utf-8")
+            if url.endswith("a.jsonl"):
+                return b'{"question": "q1", "answer": "a1"}\n'
+            if url.endswith("b.csv"):
+                return b"question,answer\nq2,a2\n"
+            raise AssertionError(url)
+
+        with patch("rsi.modules.datasets._github_get", side_effect=fake_get):
+            rows = fetch_dataset_rows(
+                DatasetSpec("gh", "github", url="o/r", path="data", ref="main"), REPO_ROOT
+            )
+
+        self.assertEqual(
+            rows,
+            [{"question": "q1", "answer": "a1"}, {"question": "q2", "answer": "a2"}],
+        )
+
+    def test_github_blob_url_maps_to_the_raw_file(self) -> None:
+        spec = DatasetSpec(
+            "gh", "github", url="https://github.com/o/r/blob/dev/data/a.jsonl"
+        )
+        with patch(
+            "rsi.modules.datasets._github_get",
+            return_value=b'{"question": "q", "answer": "a"}\n',
+        ) as get:
+            rows = fetch_dataset_rows(spec, REPO_ROOT)
+
+        get.assert_called_once_with(
+            "https://raw.githubusercontent.com/o/r/dev/data/a.jsonl"
+        )
+        self.assertEqual(rows, [{"question": "q", "answer": "a"}])
 
     def test_priority_merge_uses_available_sources_and_configured_weights(self) -> None:
         merged = merge_ability_priorities(

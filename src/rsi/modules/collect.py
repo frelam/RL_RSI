@@ -24,21 +24,50 @@ class RolloutCollector(Component):
     def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
         super().__init__(runtime, cfg, **params)
         self.enabled = self.cfg.get_bool("enabled", False)
-        self.prompts_path = self.cfg.get("prompts_path")
+        self.prompts_path = self.cfg.get("prompts_path", "")
         self.limit = self.cfg.get_int("limit", 64)
         self.samples_per_prompt = self.cfg.get_int("samples_per_prompt", 1)
         self.max_tokens = self.cfg.get_int("max_tokens", 1024)
         self.temperature = self.cfg.get_float("temperature", 0.7)
         self.max_prompt_chars = self.cfg.get_int("max_prompt_chars", 8000)
+        fail_cases = self.cfg.section("fail_cases", required=False)
+        self.fail_cases_enabled = fail_cases.get_bool("enabled", False)
+        self.fail_cases_path = fail_cases.get("path", "")
+        self.fail_cases_limit = fail_cases.get_int("limit", 32)
+        self.fail_cases_capability = str(fail_cases.get("capability", "") or "")
+
+    def _prompt_rows(self) -> list[dict[str, Any]]:
+        """Prompts from the regular file and the optional fail-case database."""
+        rows: list[dict[str, Any]] = []
+        if self.prompts_path:
+            rows.extend(read_jsonl(self.runtime.path(self.prompts_path))[: self.limit])
+        if self.fail_cases_enabled:
+            if not self.fail_cases_path:
+                raise ConfigError(
+                    "collect.rollout.fail_cases.enabled=true requires fail_cases.path"
+                )
+            path = self.runtime.path(self.fail_cases_path)
+            if not path.exists():
+                raise ConfigError(f"fail-case database not found: {path}")
+            for raw in read_jsonl(path)[: self.fail_cases_limit]:
+                if not isinstance(raw, dict):
+                    continue
+                row = dict(raw)
+                row["source"] = str(row.get("source") or "fail_case")
+                row["fail_case"] = True
+                if self.fail_cases_capability:
+                    row["capability"] = self.fail_cases_capability
+                rows.append(row)
+        if not rows and not self.prompts_path and not self.fail_cases_enabled:
+            raise ConfigError(
+                "collect.rollout.enabled=true requires prompts_path or fail_cases"
+            )
+        return rows
 
     def run(self, checkpoint: Checkpoint, round_no: int) -> list[Trajectory]:
         if not self.enabled:
             return []
-        if not self.prompts_path:
-            raise ConfigError("collect.rollout.enabled=true requires collect.rollout.prompts_path")
-        path = self.runtime.path(self.prompts_path)
-        rows = read_jsonl(path)
-        rows = rows[: self.limit]
+        rows = self._prompt_rows()
         inference = self.runtime.inference()
         inference.ensure(checkpoint)
         trajectories: list[Trajectory] = []
@@ -84,6 +113,7 @@ class RolloutCollector(Component):
                             "subcapability": row.get("subcapability", ""),
                             "sample_index": sample_index,
                             "source": row.get("source", "rollout"),
+                            "fail_case": bool(row.get("fail_case")),
                             **dict(row.get("metadata") or {}),
                         },
                     )

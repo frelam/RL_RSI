@@ -8,9 +8,9 @@ The dataset library loads curated rows from registered datasets instead of synth
 
 | Field | Effect |
 | --- | --- |
-| `url` | Where the raw data is downloaded from. For the `huggingface` loader it is the repository id. |
-| `path` | Local rows, already preprocessed. |
-| `loader` | A built-in name (`jsonl`, `parquet`, `web`, `huggingface`, `synthetic`) or a registered loader name. |
+| `url` | Where the raw data is downloaded from. For the `huggingface` loader it is the repository id; for `github` it accepts `owner/repo`, a blob/tree URL, or a raw URL. |
+| `path` | Local rows, already preprocessed. For `github` it is the file or directory inside the repository. |
+| `loader` | A built-in name (`jsonl`, `parquet`, `web`, `huggingface`, `github`, `synthetic`) or a registered loader name. |
 | `abilities` | Capability to how well the dataset covers it (0 to 1). |
 | `priority` | 0 to 1, default 0.5. How ready the local rows are to be used. |
 | `reward` | `{type, name, weight}`. `name` is the scorer that scores a response. |
@@ -18,6 +18,7 @@ The dataset library loads curated rows from registered datasets instead of synth
 | `preprocess` | A list of load-time steps, or `{pipeline, steps}` where `pipeline` names the script that turns the download into `path`. |
 | `license`, `source` | Optional. `source` keeps only the rows of this dataset when `path` mixes several. |
 | `config`, `split` | Optional, for the `huggingface` loader. |
+| `ref` | Optional, for the `github` loader. Branch or tag; defaults to `main`. |
 | `rows` | Optional, inline rows for the `synthetic` loader. |
 
 An entry with local rows is active. A `jsonl` or `parquet` entry without `path` is declared only and is skipped when datasets are selected.
@@ -30,9 +31,29 @@ An entry with local rows is active. A `jsonl` or `parquet` entry without `path` 
 | `parquet` | The file at `path`. | Optional `pyarrow` package. |
 | `web` | An HTTP(S) `url` that returns JSON or JSONL. It does not crawl. | Network access. |
 | `huggingface` | `load_dataset(url, config, split)`. | Optional `datasets` package. |
+| `github` | JSON, JSONL or CSV files in a GitHub repository. A file `path` or a raw/blob URL reads one file; a directory `path` or a tree URL lists row files through the contents API (up to 32). | Network access. Set `GITHUB_TOKEN` for higher rate limits. |
 | `synthetic` | The inline `rows`. | Nothing. |
 
 verl-style rows (verl `examples/reasoning_rl`, verl-toolRL `agentic_rl_data`) are mapped to the common row shape when loaded, by `src/rsi/adapters/verl_*.py`.
+
+### GitHub sources
+
+A GitHub entry reads JSON, JSONL or CSV rows:
+
+```yaml
+datasets:
+  gh_math:
+    loader: github
+    url: owner/repo
+    ref: main
+    path: data/math
+    abilities: {math.reasoning: 1.0}
+    reward: {type: rule, name: numeric, weight: 1.0}
+    reward_code: src/rsi/core/scoring.py::score_text (numeric)
+    preprocess: [normalize_chat, drop_empty]
+```
+
+`url` may also be `https://github.com/owner/repo/blob/main/file.jsonl` or a `raw.githubusercontent.com` URL; a blob or tree URL carries its own ref. Directory paths are listed through the contents API. Rows use the same `prompt`/`response`/`messages` fields as other loaders.
 
 ### Custom loaders
 
@@ -74,6 +95,7 @@ The request count is the required sample total. `max_datasets` is an independent
 
 - Each dataset gets an integer quota from the request count and the ratios, using largest-remainder rounding.
 - Rows are filtered by `source`, preprocessed, and deduplicated by a hash of prompt and response. A row whose capability the dataset does not cover is dropped.
+- Rows without an assistant response are marked `prompt_only`. Response-dependent filters (`format`, `length`, `judge_quality`, `verifier`) skip the response checks for them, because an RL prompt set has a reference but no gold response.
 - The `benchmark_leakage` filter drops samples that match a configured benchmark prompt, by normalized hash or n-gram similarity. It reads explicit `paths` and, by default, every file-backed entry under `benchmark.benchmarks`.
 - A dataset that fails to load is logged and skipped. The other sources still serve the request.
 - When the selected datasets hand out fewer samples than the quota asks for, the gap is filled from the rows they have left, in selection order.
@@ -81,12 +103,22 @@ The request count is the required sample total. `max_datasets` is an independent
 
 In the loop, these samples then pass through the existing filter, difficulty, mixing, and builder stages like any other sample.
 
+## Artifact formats
+
+`data.build.format` selects the artifact format for `train_path` / `val_path`:
+
+- `jsonl` (default) writes `train.jsonl` and `val.jsonl`.
+- `parquet` writes `train.parquet` and `val.parquet` and keeps the JSONL copies for replay and audit.
+
+`data.build.type: verl_parquet` is the parquet preset with the `verl_jsonl` row schema. It requires the optional `datasets` or `pyarrow` package. The trainer receives the selected paths through `{train_path}` and `{val_path}`.
+
 ## Reward selection and enhancement
 
 The builder writes `reward_spec.json` next to the rows. For each capability, the rule merges the builder default, the capability catalog reward, the dataset `reward` hint, and `data.build.reward.by_capability`. The chapter-2 strategy therefore selects built-in rewards from the datasets it materializes.
 
 - `data.build.reward.defect_boost` above 1 raises the rule weight for capabilities present in the chapter-1 defect report, scaled by `severity x confidence`.
 - With `data.build.reward.codegen.enabled`, an LLM agent writes `<dataset>/rewards/<capability>.py` for up to `max_capabilities` defects. The rule records `code_path`, `code_entrypoint`, and `code_language`. The module is persisted for the trainer; the builder does not execute it.
+- For verl training, mount `src/rsi/rewards/verl_bridge.py` as the custom reward function. It reads the verifier recorded in each row's `extra_info` and dispatches to the built-in rule scorers or the `reasoning_rl` / `agentic_rl` adapters.
 
 ## Task entry points
 

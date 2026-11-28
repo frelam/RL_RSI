@@ -8,9 +8,11 @@ from types import SimpleNamespace
 from rsi.core.config import Config
 from rsi.loops.stop import (
     BudgetPolicy,
+    DataReusePolicy,
     MaxRoundsPolicy,
     ManualPolicy,
     PlateauPolicy,
+    ScalingLawPolicy,
     StopEvaluator,
     TargetScorePolicy,
 )
@@ -85,6 +87,98 @@ class StopPolicyTests(unittest.TestCase):
             self.assertIsNone(policy.evaluate(state(), {}))
             (Path(td) / "STOP").write_text("stop", encoding="utf-8")
             self.assertTrue(policy.evaluate(state(), {}).should_stop)
+
+    def test_data_reuse_stops_after_max_epochs(self) -> None:
+        policy = DataReusePolicy(
+            SimpleNamespace(logger=__import__("logging").getLogger("t")),
+            cfg({"max_epochs": 2.0, "min_rounds": 1}),
+        )
+        history = [
+            {"synthesize": {"selected": 100, "replayed": 0,
+                            "data_pool": {"unique_new": 100, "pool_size": 100}}},
+        ]
+        record = {"synthesize": {"selected": 100, "replayed": 50,
+                                 "data_pool": {"unique_new": 0, "pool_size": 100}}}
+        decision = policy.evaluate(state(round=2, history=history), record)
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.details["trigger"], "max_epochs")
+        self.assertAlmostEqual(decision.details["epochs"], 2.0)
+
+    def test_data_reuse_waits_until_the_epoch_budget(self) -> None:
+        policy = DataReusePolicy(
+            SimpleNamespace(logger=__import__("logging").getLogger("t")),
+            cfg({"max_epochs": 2.0}),
+        )
+        history = [{"synthesize": {"selected": 100, "data_pool": {"pool_size": 100}}}]
+        record = {"synthesize": {"selected": 50, "data_pool": {"pool_size": 100}}}
+        self.assertIsNone(policy.evaluate(state(round=2, history=history), record))
+
+    def test_data_reuse_stops_when_the_pool_is_exhausted(self) -> None:
+        policy = DataReusePolicy(
+            SimpleNamespace(logger=__import__("logging").getLogger("t")),
+            cfg({"max_epochs": 2.0, "stop_on_exhausted": True}),
+        )
+        record = {"synthesize": {"selected": 0, "replayed": 0,
+                                 "data_pool": {"unique_new": 0, "pool_size": 100}}}
+        decision = policy.evaluate(state(round=1), record)
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.details["trigger"], "exhausted")
+
+    def test_data_reuse_ignores_rounds_without_data(self) -> None:
+        policy = DataReusePolicy(
+            SimpleNamespace(logger=__import__("logging").getLogger("t")),
+            cfg({"max_epochs": 2.0}),
+        )
+        self.assertIsNone(policy.evaluate(state(round=1), {"synthesize": {"status": "skipped"}}))
+
+    def test_scaling_law_stops_at_the_projected_peak(self) -> None:
+        policy = ScalingLawPolicy(
+            SimpleNamespace(logger=__import__("logging").getLogger("t")),
+            cfg({"min_margin": 0.01}),
+        )
+        record = {
+            "train": {
+                "findings": [{
+                    "code": "scaling_law_projection",
+                    "suggestion": {
+                        "asymptotic_score": 0.62,
+                        "current_score": 0.615,
+                        "effect_levels": {"p90": {"remaining_compute": 100.0}},
+                    },
+                }]
+            }
+        }
+        decision = policy.evaluate(state(round=1), record)
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.details["trigger"], "theoretical_peak")
+
+    def test_scaling_law_stops_when_the_budget_is_too_small(self) -> None:
+        policy = ScalingLawPolicy(
+            SimpleNamespace(logger=__import__("logging").getLogger("t")),
+            cfg({"max_remaining_compute": 50.0, "budget_margin": 0.05}),
+        )
+        record = {
+            "train": {
+                "findings": [{
+                    "code": "scaling_law_projection",
+                    "suggestion": {
+                        "asymptotic_score": 0.74,
+                        "current_score": 0.70,
+                        "effect_levels": {"p90": {"remaining_compute": 100.0}},
+                    },
+                }]
+            }
+        }
+        decision = policy.evaluate(state(round=1), record)
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.details["trigger"], "compute_budget")
+
+    def test_scaling_law_needs_a_projection(self) -> None:
+        policy = ScalingLawPolicy(
+            SimpleNamespace(logger=__import__("logging").getLogger("t")),
+            cfg({"min_margin": 0.01}),
+        )
+        self.assertIsNone(policy.evaluate(state(round=1), {"train": {"findings": []}}))
 
     def test_evaluator_combines_policies(self) -> None:
         with tempfile.TemporaryDirectory() as td:

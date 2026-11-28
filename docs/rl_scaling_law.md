@@ -43,6 +43,22 @@ A logistic learning curve is a useful low-parameter approximation when held-out 
 
 The model is not identifiable from one post-midpoint sample. It needs multiple observations spanning the transition, a baseline, and an assumed score bound. Fixing the baseline and bounding accuracy to $[0,1]$ make this implementation suitable for accuracy-like metrics, not unbounded reward, loss, or arbitrary benchmark scores. Its fit quality is only an in-sample check, and no statistical confidence interval is implied. Validation noise, distribution shifts, curriculum changes, optimizer changes, or catastrophic forgetting can invalidate the forecast. Compare projections with later checkpoints and use controlled runs before allocating substantial compute.
 
+## Loop stop policy
+
+The `scaling_law` stop policy turns the projection into a loop decision. Enable it under `stop.policies` together with the monitor:
+
+```yaml
+stop:
+  policies:
+    - type: scaling_law
+      min_rounds: 1
+      min_margin: 0.01          # stop when ceiling - current <= margin
+      max_remaining_compute: 0  # > 0 enables the budget trigger
+      budget_margin: 0.05
+```
+
+The peak trigger fires when the fitted ceiling adds at most `min_margin` over the latest observed score. The budget trigger fires when p90 needs more than `max_remaining_compute` and the projected gain is at most `budget_margin`. The policy reads the latest `scaling_law_projection` finding from the training record and does nothing when no fit was produced. Because the projection is a single-run forecast, treat the stop as advisory evidence alongside reward, validation, and remaining data.
+
 ## Configuration
 
 Enable it as a monitor and map the backend's validation accuracy to `val_score` through `trainer.metric_aliases` when needed:

@@ -14,6 +14,8 @@ PYTHONPATH=src python -m rsi inspect runs/smoke-mock --history
 
 This run uses mock inference, data generation, benchmarking, and training. It verifies that stages execute and artifacts are written. It says nothing about a real reward function, model, or trainer.
 
+Every setting has a built-in default, so `--config` is optional: omit it to use `./configs/default.yaml` when present, or the packaged defaults otherwise. `--variable key.path=value` changes single settings without editing a file.
+
 ## Real trainer workflow
 
 1. Validate the real config and component setup before allocating accelerators:
@@ -30,6 +32,16 @@ This run uses mock inference, data generation, benchmarking, and training. It ve
 4. Run the short job and inspect its generated dataset manifest and `pipeline.json`. Confirm that expected sources/groups survived filtering, the selected counts are nonzero, the actual training shares are close enough to the configured target for this tiny sample, and the validation split did not consume the training examples. Small samples make ratios coarse, so treat them as a wiring check.
 
 5. Check the first few metric records and logs for finite loss and gradient norm, a non-failing trainer exit, checkpoint output, and reasonable KL, entropy, response length, memory use, and step time where the backend reports them. Inspect a few high-reward outputs if accessible. A rising training reward alone is not evidence that the reward is correct.
+
+## Real verl checklist
+
+Before the first real run, confirm the pieces the generic adapter does not provide:
+
+1. **Data.** Materialize enough local rows for `data.strategy.count`; the `examples/datasets` rows are placeholders. Set `data.build.type: verl_parquet` so `{train_path}` and `{val_path}` are parquet. Rows without an assistant response are marked `prompt_only` and survive the response-dependent filters.
+2. **Reward.** Mount `src/rsi/rewards/verl_bridge.py` as `reward.custom_reward_function.path` with `compute_score` as its name. It reads each row's `extra_info.verifier` and dispatches to the built-in rule scorers or the `reasoning_rl` / `agentic_rl` adapters.
+3. **Checkpoint.** Set `trainer.checkpoint_glob` (for example `global_step_*`) and, when verl writes sharded checkpoints, a `trainer.export` command that calls `verl.model_merger` into a Hugging Face directory. vLLM cannot serve an FSDP checkpoint directly.
+4. **GPUs.** With vLLM and the trainer on the same node, set `train.release_inference: true`. If serving is pinned to other devices through `infer.launch.env`, leave it false.
+5. **Metrics.** The command trainer reads `trainer.metrics_path`. verl does not write that JSONL by default; add a callback. Without it, training and benchmark validation still run, but metric monitors stay idle and the scaling-law projection has no data.
 
 ## Stop and adjust
 

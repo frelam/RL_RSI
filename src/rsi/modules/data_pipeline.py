@@ -185,6 +185,10 @@ class DataPipeline:
         if self.replay_strategy not in {"uniform", "target"}:
             raise ConfigError("data.replay.strategy must be 'uniform' or 'target'")
         self._last_replay_info: dict[str, Any] = {}
+        # Distinct sample ids ever selected for training, and per round, so the
+        # stop policy can measure epoch reuse across rounds.
+        self._session_sample_ids: set[str] = set()
+        self._round_sample_ids: dict[int, set[str]] = {}
 
     def validate(self) -> None:
         """Check every prompt referenced by collectors, filters and graders."""
@@ -399,6 +403,7 @@ class DataPipeline:
                 }
         selected, sampler_stats = self.sampler.select(kept, weights, context)
         context.sampler_stats = sampler_stats
+        data_pool = self._data_pool_stats(round_no, selected)
         if self.save_intermediate:
             from rsi.core.jsonio import write_jsonl
 
@@ -423,6 +428,7 @@ class DataPipeline:
                     "errors": errors,
                     "replay": replay_info,
                     "merge": merge_info,
+                    "data_pool": data_pool,
                     "data_strategy": context.data_strategy,
                     "synthesis": synthesis,
                 }
@@ -453,6 +459,7 @@ class DataPipeline:
                 "target_distribution": context.target_distribution,
                 "replay": replay_info,
                 "merge": merge_info,
+                "data_pool": data_pool,
                 "strategy": context.data_strategy or {},
                 "strategy_accepted": strategy.review.accepted if strategy is not None else None,
                 "synthesis": synthesis,
@@ -615,7 +622,18 @@ class DataPipeline:
             int(math.ceil(strategy.count * sum(deficits.values()))),
         )
         total = max(0, min(total, strategy.count))
-        quotas = allocate_quotas(deficits, total)
+        names = sorted(deficits)
+        # A proportional split can starve a small deficit. Reserve one row per
+        # deficit when the budget allows it, otherwise the ratio sampler cannot
+        # represent that group and the whole round materializes nothing.
+        total = max(total, min(len(names), strategy.count, self.strategy_synthesis_max))
+        if total >= len(names):
+            quotas = {name: 1 for name in names}
+            extra = allocate_quotas(deficits, total - len(names))
+            for name, count in extra.items():
+                quotas[name] += count
+        else:
+            quotas = allocate_quotas(deficits, total)
         info["requested"] = total
         samples: list[DataSample] = []
         for capability, quota in sorted(quotas.items()):
@@ -675,6 +693,22 @@ class DataPipeline:
         dropped = {id(sample) for sample in ordered[:overflow]}
         kept = [sample for sample in dataset_samples if id(sample) not in dropped]
         return (kept + synthesized)[:count]
+
+    def _data_pool_stats(self, round_no: int, selected: list[DataSample]) -> dict[str, Any]:
+        """Count distinct samples seen so far and this round's epoch reuse."""
+        selected_ids = {sample.id for sample in selected}
+        earlier_rounds = self._session_sample_ids - self._round_sample_ids.get(round_no, set())
+        fresh = selected_ids - earlier_rounds
+        pool = earlier_rounds | selected_ids
+        self._session_sample_ids |= selected_ids
+        self._round_sample_ids.setdefault(round_no, set()).update(selected_ids)
+        return {
+            "round": round_no,
+            "selected": len(selected),
+            "unique_new": len(fresh),
+            "pool_size": len(pool),
+            "epochs": len(selected) / len(pool) if pool else 0.0,
+        }
 
     def _load_replay(
         self,
@@ -813,7 +847,9 @@ class DataPipeline:
             style = str(reward_model.get("style") or "contains")
             verifier = {"type": "rule", "name": style}
         sample_metadata = dict(metadata)
-        sample_metadata.update(replay=True, replayed_from_round=source_round)
+        sample_metadata.update(
+            replay=True, replayed_from_round=source_round, prompt_only=not response
+        )
         sample_id = row.get("id") or extra.get("id")
         if not sample_id:
             sample_id = stable_hash("replay", source_round, prompt, response)

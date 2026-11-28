@@ -24,9 +24,15 @@ Take a model, pick a task preset, and let the loop run:
 ```bash
 # Improve a checkpoint on agentic + reasoning, at most 20 loop rounds
 rsi run --model /path/to/checkpoint --task agentic/reasoning --round 20
+
+# Override any setting from the command line instead of editing a file
+rsi run --model /path/to/checkpoint --task reasoning --round 3 \
+  --variable trainer.steps=200 --variable stop.combine=any
 ```
 
-Presets live in [configs/tasks.yaml](configs/tasks.yaml) (`/` or `,` combines them); all other settings come from the config file.
+Presets live in [configs/tasks.yaml](configs/tasks.yaml) (`/` or `,` combines them). `--config` is optional: the run uses `./configs/default.yaml` when present and the built-in defaults otherwise. Every setting has a default, so a config file only lists the keys it changes; `--variable key.path=value` overrides any of them.
+
+Before a real verl/vLLM run, check [the real-run checklist](docs/smoke_run.md#real-verl-checklist).
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and [configs/datasets.yaml](configs/datasets.yaml) for the dataset registry.
 

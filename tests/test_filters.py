@@ -50,6 +50,41 @@ class FilterTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_prompt_only_rl_rows_survive_response_filters(self) -> None:
+        sample = make_sample(
+            response="",
+            reference="42",
+            metadata={"prompt_only": True},
+            verifier={"type": "rule", "name": "numeric"},
+        )
+
+        formatter = FormatFilter(self.runtime, cfg({"require_response": True}))
+        self.assertEqual(formatter.filter([sample], self.ctx).kept, [sample])
+
+        length = LengthFilter(
+            self.runtime, cfg({"min_prompt_chars": 4, "min_response_chars": 1})
+        )
+        self.assertEqual(length.filter([sample], self.ctx).kept, [sample])
+
+        verifier = VerifierFilter(self.runtime, cfg({"min_score": 0.99}))
+        batch = verifier.filter([sample], self.ctx)
+        self.assertEqual(batch.kept, [sample])
+        self.assertEqual(batch.decisions[0].reason, "prompt_only")
+
+        judge = JudgeQualityFilter(
+            self.runtime,
+            cfg({"prompt": "sample_quality", "profile": "judge", "min_score": 0.5}),
+        )
+        batch = judge.filter([sample], self.ctx)
+        self.assertEqual(batch.kept, [sample])
+        self.assertEqual(batch.decisions[0].reason, "prompt_only")
+
+    def test_response_rows_still_require_a_response(self) -> None:
+        formatter = FormatFilter(self.runtime, cfg({"require_response": True}))
+        batch = formatter.filter([make_sample(response="")], self.ctx)
+        self.assertEqual(batch.kept, [])
+        self.assertIn("empty response", batch.decisions[0].reason)
+
     def test_pii_drop_and_redact(self) -> None:
         dropper = PIIFilter(self.runtime, cfg({"action": "drop"}))
         sample = make_sample(prompt="contact me at a@b.com please")

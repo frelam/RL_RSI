@@ -60,6 +60,9 @@ class InferenceBackend(Component, ABC):
     def supports_checkpoint_switch(self) -> bool:
         return False
 
+    def stop(self) -> None:
+        """Release a managed serving process; external endpoints ignore this."""
+
 
 class LLMBackend(Component, ABC):
     category = "llm"

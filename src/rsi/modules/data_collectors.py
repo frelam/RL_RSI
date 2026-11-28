@@ -263,6 +263,7 @@ class AgenticSynthesisCollector(DataCollector):
                         "task": raw.get("name") or f"task-{index}",
                         "seed_topic": seed_topic,
                         "skills": self.skills,
+                        "prompt_only": not str(raw.get("solution") or ""),
                     },
                 )
             )

@@ -13,6 +13,8 @@ from .errors import ConfigError
 _MISSING = object()
 _ENV_RE = re.compile(r"\$\{ENV:([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
 _KNOWN_VAR_RE = re.compile(r"\$\{(config_dir|repo_root)\}")
+_PACKAGE_DIR = Path(__file__).resolve().parent.parent
+_DEFAULTS_FILE = _PACKAGE_DIR / "resources" / "default.yaml"
 
 
 class Config:
@@ -82,8 +84,9 @@ class Config:
         return self
 
     def section(self, path: str, required: bool = True) -> "Config":
-        value = self.get(path, _MISSING)
-        if value is _MISSING:
+        marker = object()
+        value = self.get(path, marker)
+        if value is marker:
             if required:
                 raise ConfigError(f"Missing config section: {self.full_path(path)}")
             value = {}
@@ -258,16 +261,84 @@ class Config:
 
 
 # ---------------------------------------------------------------------- loading
-def load_config(path: str | Path, overrides: Iterable[str] = ()) -> Config:
-    path = Path(path).expanduser().resolve()
-    if not path.exists():
-        raise ConfigError(f"Config file not found: {path}")
+def default_config_path(start: str | Path | None = None) -> Path | None:
+    """The config file used when ``--config`` is omitted.
+
+    ``./configs/default.yaml`` wins so a checkout stays editable; otherwise the
+    packaged defaults are used so the CLI runs from any directory.
+    """
+    local = (Path(start) if start else Path.cwd()) / "configs" / "default.yaml"
+    if local.is_file():
+        return local
+    return _DEFAULTS_FILE if _DEFAULTS_FILE.is_file() else None
+
+
+def load_builtin_defaults() -> dict[str, Any]:
+    """The packaged default tree; a fresh copy on every call so it can be mutated."""
+    if not _DEFAULTS_FILE.is_file():
+        raise ConfigError(
+            f"Built-in defaults are missing from the installation: {_DEFAULTS_FILE}"
+        )
+    with _DEFAULTS_FILE.open("r", encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh) or {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"Built-in defaults must be a mapping: {_DEFAULTS_FILE}")
+    return raw
+
+
+def load_config(path: str | Path | None = None, overrides: Iterable[str] = ()) -> Config:
+    """Load a config file on top of the built-in defaults.
+
+    Every key not set by the file (or its includes) keeps its default value, so
+    a partial config is valid. With ``path=None`` the nearest
+    ``configs/default.yaml`` is used, falling back to the packaged defaults.
+    """
+    base = load_builtin_defaults()
     sources: list[Path] = []
-    data = _load_yaml_with_includes(path, seen=set(), sources=sources)
+    if path is not None:
+        resolved = Path(path).expanduser().resolve()
+        if not resolved.exists():
+            raise ConfigError(f"Config file not found: {resolved}")
+        data = _deep_merge(base, _load_yaml_with_includes(resolved, seen=set(), sources=sources))
+        config_dir = resolved.parent
+        repo_root = _resolve_repo_root(resolved, sources, data)
+        source = str(resolved)
+    else:
+        resolved = default_config_path()
+        if resolved is not None:
+            data = _deep_merge(base, _load_yaml_with_includes(resolved, seen=set(), sources=sources))
+            source = str(resolved)
+            if resolved == _DEFAULTS_FILE:
+                config_dir, repo_root = _default_roots()
+            else:
+                config_dir = resolved.parent
+                repo_root = _resolve_repo_root(resolved, sources, data)
+        else:
+            data = base
+            source = "<builtin defaults>"
+            config_dir, repo_root = _default_roots()
     for expr in overrides:
         apply_override(data, expr)
-    repo_root = _resolve_repo_root(path, sources, data)
-    return Config(data, source=str(path), config_dir=path.parent, repo_root=repo_root)
+    return Config(data, source=source, config_dir=config_dir, repo_root=repo_root)
+
+
+def _default_roots() -> tuple[Path, Path]:
+    """Anchor built-in defaults at the nearest checkout with its assets, else cwd."""
+    local_root = _infer_repo_root(Path.cwd()) or Path.cwd().resolve()
+    root = local_root if _has_assets(local_root) else (_asset_root() or local_root)
+    return root, root
+
+
+def _has_assets(root: Path) -> bool:
+    return (root / "configs").is_dir() and (root / "prompts").is_dir()
+
+
+def _asset_root() -> Path | None:
+    """Find a checkout that ships the default assets (prompts/, skills/, configs/)."""
+    for candidate in (_PACKAGE_DIR, *_PACKAGE_DIR.parents):
+        if _has_assets(candidate):
+            return candidate
+    return None
 
 
 def _resolve_repo_root(path: Path, sources: list[Path], data: dict[str, Any]) -> Path:
@@ -279,7 +350,10 @@ def _resolve_repo_root(path: Path, sources: list[Path], data: dict[str, Any]) ->
         root = _infer_repo_root(source.parent)
         if root is not None:
             return root
-    return path.parent.parent
+    root = _infer_repo_root(Path.cwd())
+    if root is not None:
+        return root
+    return _asset_root() or path.parent
 
 
 def _load_yaml_with_includes(path: Path, seen: set[Path], sources: list[Path]) -> dict[str, Any]:

@@ -34,6 +34,11 @@ def _empty_batch(samples: list[DataSample]) -> FilterBatch:
     )
 
 
+def _is_prompt_only(sample: DataSample) -> bool:
+    """RL training rows carry a prompt and reference, not an assistant response."""
+    return bool(sample.metadata.get("prompt_only"))
+
+
 @register("data_filter", "pii")
 class PIIFilter(SampleFilter):
     def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
@@ -88,7 +93,7 @@ class LengthFilter(SampleFilter):
                 reasons.append("prompt too short")
             if len(sample.prompt) > self.max_prompt:
                 reasons.append("prompt too long")
-            if sample.kind not in {"agentic"}:
+            if not _is_prompt_only(sample) and sample.kind not in {"agentic"}:
                 if len(sample.response) < self.min_response:
                     reasons.append("response too short")
                 if len(sample.response) > self.max_response:
@@ -120,13 +125,18 @@ class FormatFilter(SampleFilter):
                 reason = f"kind {sample.kind} not allowed"
             elif not sample.prompt.strip():
                 reason = "empty prompt"
-            elif sample.kind not in {"agentic"} and self.require_response and not sample.response.strip():
+            elif (
+                not _is_prompt_only(sample)
+                and sample.kind not in {"agentic"}
+                and self.require_response
+                and not sample.response.strip()
+            ):
                 reason = "empty response"
             elif self.require_reference and not sample.reference:
                 reason = "missing reference"
             elif self.reject_identical and sample.response.strip() == sample.prompt.strip():
                 reason = "response equals prompt"
-            elif self.require_json:
+            elif self.require_json and not _is_prompt_only(sample):
                 try:
                     json.loads(sample.response)
                 except json.JSONDecodeError:
@@ -303,6 +313,14 @@ class JudgeQualityFilter(SampleFilter):
     def filter(self, samples: list[DataSample], context: Any) -> FilterBatch:
         batch = FilterBatch()
         for sample in samples:
+            if _is_prompt_only(sample):
+                # There is no response to judge; the prompt set is verified downstream.
+                sample.quality = 1.0
+                batch.kept.append(sample)
+                batch.decisions.append(
+                    FilterDecision(sample.id, True, "judge_quality", "prompt_only")
+                )
+                continue
             key = stable_hash("quality", sample.prompt[: self.max_chars], sample.response[: self.max_chars])
             if key in self._cache:
                 score = self._cache[key]
@@ -371,6 +389,19 @@ class VerifierFilter(SampleFilter):
     def filter(self, samples: list[DataSample], context: Any) -> FilterBatch:
         batch = FilterBatch()
         for sample in samples:
+            if _is_prompt_only(sample):
+                # The reference is the reward target, not a response to verify.
+                if self.require_reference and not sample.reference:
+                    batch.dropped.append(sample)
+                    batch.decisions.append(
+                        FilterDecision(sample.id, False, "verifier", "missing reference")
+                    )
+                else:
+                    batch.kept.append(sample)
+                    batch.decisions.append(
+                        FilterDecision(sample.id, True, "verifier", "prompt_only")
+                    )
+                continue
             verifier = sample.verifier or {}
             name = str(verifier.get("name") or verifier.get("type") or "contains")
             if not sample.reference:

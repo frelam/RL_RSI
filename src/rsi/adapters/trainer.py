@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -170,6 +171,21 @@ class CommandTrainer(TrainerBackend):
         self.metric_aliases = self.cfg.get_dict("metric_aliases", {})
         self.gpu_count = self.cfg.get_int("gpu_count", 0)
         self.env = self.cfg.get_dict("env", {})
+        self.reward_function = str(self.cfg.get("reward_function", "") or "")
+        self.checkpoint_glob = str(self.cfg.get("checkpoint_glob", "") or "")
+        self.checkpoint_subdir = str(self.cfg.get("checkpoint_subdir", "") or "")
+        self.checkpoint_path_template = str(self.cfg.get("checkpoint_path", "") or "")
+        export_cfg = self.cfg.section("export", required=False)
+        self.export_command = export_cfg.get("command", []) or []
+        self.export_dir_template = str(export_cfg.get("output_dir", "{work_dir}/exported"))
+        self.export_timeout_s = export_cfg.get_float("timeout_s", 3600.0)
+        self.export_env = export_cfg.get_dict("env", {})
+        if self.export_command and not (
+            self.checkpoint_glob or self.checkpoint_subdir or self.checkpoint_path_template
+        ):
+            raise AdapterError(
+                "trainer.export requires checkpoint_glob, checkpoint_subdir, or checkpoint_path"
+            )
         self._proc = None
 
     def train(self, spec: TrainingSpec, observer: Callable[[dict[str, Any]], Any] | None = None) -> TrainingResult:
@@ -183,6 +199,10 @@ class CommandTrainer(TrainerBackend):
             "checkpoint_id": spec.checkpoint.id,
             "round": spec.round,
             "run_dir": str(self.runtime.run_dir),
+            "repo_root": str(self.runtime.repo_root),
+            "reward_function": (
+                str(self.runtime.path(self.reward_function)) if self.reward_function else ""
+            ),
             "work_dir": str(spec.work_dir),
             "seed": spec.seed,
         }
@@ -246,7 +266,76 @@ class CommandTrainer(TrainerBackend):
             error = f"trainer exited with code {proc.returncode}"
         best = _best_record(tailed, self.best_metric)
         gpu_hours = (duration / 3600.0) * self.gpu_count if self.gpu_count else 0.0
-        checkpoint_path = str(output_dir.resolve()) if output_dir.exists() else None
+        raw_checkpoint = self._resolve_checkpoint(output_dir, variables, best)
+        if (
+            raw_checkpoint is None
+            and status in {"completed", "stopped_by_monitor"}
+            and (self.checkpoint_glob or self.checkpoint_subdir or self.checkpoint_path_template)
+        ):
+            status = "failed"
+            error = f"no checkpoint matched in {output_dir}"
+        checkpoint_path = str(raw_checkpoint) if raw_checkpoint is not None else None
+        export_info: dict[str, Any] = {}
+        if (
+            self.export_command
+            and raw_checkpoint is not None
+            and status in {"completed", "stopped_by_monitor"}
+        ):
+            export_dir = Path(format_template(self.export_dir_template, variables))
+            if not export_dir.is_absolute():
+                export_dir = spec.work_dir / export_dir
+            variables.update(
+                checkpoint_path=str(raw_checkpoint),
+                export_dir=str(export_dir),
+                export_path=str(export_dir),
+            )
+            export_command = format_template(self.export_command, variables)
+            try:
+                outcome = self.runtime.executor.run(
+                    export_command,
+                    cwd=spec.work_dir,
+                    env=format_template(self.export_env, variables),
+                    timeout=self.export_timeout_s if self.export_timeout_s > 0 else None,
+                    label="trainer.export",
+                    check=True,
+                )
+            except Exception as exc:  # noqa: BLE001 - surface as a failed attempt
+                status = "failed"
+                error = f"checkpoint export failed: {exc}"
+                checkpoint_path = None
+                export_info = {
+                    "command": " ".join(map(str, export_command))
+                    if isinstance(export_command, list) else str(export_command),
+                    "output_dir": str(export_dir),
+                    "ok": False,
+                    "error": str(exc),
+                }
+            else:
+                if export_dir.exists():
+                    # Some verl versions write the HF view into a huggingface/
+                    # subdirectory of target_dir; serve whichever has config.json.
+                    export_root = (
+                        export_dir / "huggingface"
+                        if (export_dir / "huggingface" / "config.json").exists()
+                        else export_dir
+                    )
+                    checkpoint_path = str(export_root.resolve())
+                    export_info = {
+                        "command": outcome.command,
+                        "output_dir": str(export_dir),
+                        "checkpoint_path": checkpoint_path,
+                        "ok": True,
+                    }
+                else:
+                    status = "failed"
+                    error = f"checkpoint export produced no directory: {export_dir}"
+                    checkpoint_path = None
+                    export_info = {
+                        "command": outcome.command,
+                        "output_dir": str(export_dir),
+                        "ok": False,
+                        "error": error,
+                    }
         return TrainingResult(
             job_id=f"train-r{spec.round:04d}-{int(started)}",
             status=status,
@@ -261,10 +350,36 @@ class CommandTrainer(TrainerBackend):
             metadata={
                 "dataset_id": spec.dataset.dataset_id,
                 "checkpoint_in": spec.checkpoint.id,
+                "raw_checkpoint_path": str(raw_checkpoint) if raw_checkpoint is not None else None,
+                "metrics_records": len(tailed),
+                "export": export_info,
                 "gpu_hours": gpu_hours,
                 "command": command if isinstance(command, str) else " ".join(command),
             },
         )
+
+    def _resolve_checkpoint(
+        self, output_dir: Path, variables: dict[str, Any], best: dict[str, Any] | None
+    ) -> Path | None:
+        """Pick the trained checkpoint directory a serving backend can load."""
+        template_vars = {
+            **variables,
+            "output_dir": str(output_dir),
+            "best_step": best.get("step", "") if best else "",
+        }
+        if self.checkpoint_path_template:
+            candidate = Path(format_template(self.checkpoint_path_template, template_vars))
+            if not candidate.is_absolute():
+                candidate = output_dir / candidate
+            return candidate if candidate.exists() else None
+        if self.checkpoint_subdir:
+            candidate = output_dir / format_template(self.checkpoint_subdir, template_vars)
+            return candidate if candidate.exists() else None
+        if self.checkpoint_glob:
+            pattern = str(format_template(self.checkpoint_glob, template_vars))
+            matches = [path for path in output_dir.glob(pattern) if path.exists()]
+            return max(matches, key=_checkpoint_sort_key) if matches else None
+        return output_dir if output_dir.exists() else None
 
     def close(self) -> None:
         if self._proc is not None and self._proc.poll() is None:
@@ -329,6 +444,17 @@ def _best_record(records: list[dict[str, Any]], metric: str) -> dict[str, Any] |
         if isinstance(value, (int, float)) and not isinstance(value, bool) and float(value) > best_value:
             best, best_value = record, float(value)
     return best
+
+
+def _checkpoint_sort_key(path: Path) -> tuple[int, float, str]:
+    """Latest step-named checkpoint first; non-numeric names fall back to mtime."""
+    numbers = re.findall(r"\d+", path.name)
+    step = int(numbers[-1]) if numbers else -1
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return step, mtime, path.name
 
 
 def _terminate(proc: Any) -> None:

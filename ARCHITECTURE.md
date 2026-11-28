@@ -24,19 +24,19 @@ Dependency direction is `loops -> modules -> core` and `adapters -> core`. Modul
 
 ## Classical loop
 
-The classical loop synchronizes the current checkpoint, collects benchmark evidence and trajectories, analyzes capability gaps, plans and builds data, trains a candidate, validates it, optionally runs teacher-aware distillation, and promotes or rejects the candidate. A stop policy evaluates the completed round.
+The classical loop synchronizes the current checkpoint, collects benchmark evidence and trajectories, analyzes capability gaps, plans and builds data, trains a candidate, validates it, optionally runs teacher-aware distillation, promotes or rejects the candidate, and optionally deploys the resulting checkpoint. A stop policy evaluates the completed round.
 
 Each completed round is persisted in `state.json`. Stage artifacts, dataset manifests, command logs, and the checkpoint registry are stored under `runs/<id>/`. Checkpoint registry state is authoritative. Candidate checkpoints become current only after validation accepts them.
 
 ## Training and monitoring
 
-Trainer implementations call an observer with normalized metric records. `MonitorHub` runs the configured monitor plugins and stores findings. The trainer adapter owns backend-specific parsing and field mapping. The command trainer supports JSONL records and configurable metric aliases. See [training strategy and monitoring theory](docs/training_strategy_monitoring.md) for schedule rationale, signal interpretation, and plugin lifecycle.
+Trainer implementations call an observer with normalized metric records. `MonitorHub` runs the configured monitor plugins and stores findings. The trainer adapter owns backend-specific parsing and field mapping. The command trainer supports JSONL records and configurable metric aliases. See [training strategy](docs/training_strategy.md) and [metric-driven monitoring](docs/training_monitoring.md) for schedule rationale, signal interpretation, and plugin lifecycle.
 
 Critical findings can stop training. The supervisor can retry failed or unstable attempts with suggested overrides. Data feedback can rebuild a dataset with adjusted difficulty or reward weights. Recommendations remain attached to findings and run artifacts for audit.
 
 ## Configuration and extension
 
-Configuration supports nested YAML, recursive includes, environment substitution, and dotted CLI overrides. Plugin specs accept registered names or import paths. Components receive their own configuration subtree and implement the interface in `src/rsi/core/interfaces.py`.
+Configuration supports built-in defaults, nested YAML, recursive includes, environment substitution, and dotted CLI overrides (`--variable key.path=value`). `--config` is optional: the packaged defaults are always applied first, and a config file only needs the keys it changes. Plugin specs accept registered names or import paths. Components receive their own configuration subtree and implement the interface in `src/rsi/core/interfaces.py`.
 
 To add a trainer, implement `TrainerBackend.train()` and invoke its observer with normalized records. To add a metric parser, normalize backend records in the adapter before notifying the observer. To add an observe-action rule, implement `MonitorAlgorithm.observe(history)`, register it under the `monitor` category, and include it in `train.monitor.algorithms`. Rules can return `Finding` objects with severity, evidence, and suggested actions.
 

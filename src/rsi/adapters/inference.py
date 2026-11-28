@@ -9,6 +9,7 @@ from typing import Any
 
 from rsi.adapters.openai_http import api_key_from_config, normalize_base_url, openai_chat
 from rsi.adapters.llm import _substitute
+from rsi.adapters.templating import format_template
 from rsi.core.errors import AdapterError
 from rsi.core.interfaces import InferenceBackend
 from rsi.core.registry import register
@@ -146,17 +147,26 @@ class VLLMLocalInference(OpenAICompatibleInference):
         self.launch_enabled = self.launch_cfg.get_bool("enabled", False)
         self.port = self.launch_cfg.get_int("port", 8000)
         self.startup_timeout_s = self.launch_cfg.get_float("startup_timeout_s", 600.0)
+        self.launch_env = self.launch_cfg.get_dict("env", {})
         self._proc = None
         self._log_handle = None
         self._served_model_path: str | None = None
+        self._served_checkpoint_id: str | None = None
 
     def supports_checkpoint_switch(self) -> bool:
         return self.launch_enabled or self.follow_checkpoints
 
+    def stop(self) -> None:
+        self._stop_server()
+
     def ensure(self, checkpoint: Checkpoint) -> EndpointInfo:
         if not self.launch_enabled:
             return super().ensure(checkpoint)
-        if self._served_model_path == checkpoint.model_path and self._alive():
+        if (
+            self._served_model_path == checkpoint.model_path
+            and self._served_checkpoint_id == checkpoint.id
+            and self._alive()
+        ):
             self._checkpoint = checkpoint
             return self._info(checkpoint)
         self._stop_server()
@@ -176,8 +186,10 @@ class VLLMLocalInference(OpenAICompatibleInference):
     def _alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
-    def _start_server(self, checkpoint: Checkpoint) -> None:
-        command = self.launch_cfg.get("command")
+    def _launch_spec(
+        self, checkpoint: Checkpoint
+    ) -> tuple[str | list[str], dict[str, Any]]:
+        command = self.launch_cfg.get("command", [])
         if not command:
             raise AdapterError("vllm launch.enabled=true requires launch.command")
         variables = {
@@ -186,16 +198,19 @@ class VLLMLocalInference(OpenAICompatibleInference):
             "port": self.port,
             "host": "127.0.0.1",
         }
-        if isinstance(command, str):
-            argv: str | list[str] = _substitute(command, variables)
-        elif isinstance(command, list):
-            argv = [str(_substitute(str(part), variables)) for part in command]
-        else:
+        argv = format_template(command, variables)
+        if not isinstance(argv, (str, list)):
             raise AdapterError("launch.command must be a string or list")
+        env = format_template(self.launch_env, variables)
+        return argv, env
+
+    def _start_server(self, checkpoint: Checkpoint) -> None:
+        argv, env = self._launch_spec(checkpoint)
         log_path = self.runtime.run_dir / "vllm" / f"{checkpoint.id}.log"
         self._proc, self._log_handle = self.runtime.executor.start(
             argv,
             cwd=self.runtime.run_dir,
+            env={str(key): str(value) for key, value in env.items()},
             log_path=log_path,
             label="vllm.launch",
         )
@@ -211,6 +226,7 @@ class VLLMLocalInference(OpenAICompatibleInference):
                 with urllib.request.urlopen(health, timeout=5) as response:
                     if response.status == 200:
                         self._served_model_path = checkpoint.model_path
+                        self._served_checkpoint_id = checkpoint.id
                         self.logger.info("vLLM ready at %s", self.base_url)
                         return
             except (urllib.error.URLError, TimeoutError, OSError):
@@ -228,6 +244,7 @@ class VLLMLocalInference(OpenAICompatibleInference):
                 self._proc.kill()
         self._proc = None
         self._served_model_path = None
+        self._served_checkpoint_id = None
         if self._log_handle is not None:
             self._log_handle.close()
             self._log_handle = None

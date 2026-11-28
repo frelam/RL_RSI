@@ -53,6 +53,12 @@ a:
             cfg.get("a.missing")
         self.assertEqual(cfg.get("a.missing", 7), 7)
 
+    def test_optional_section_defaults_to_empty(self) -> None:
+        cfg = Config({"a": {"b": 1}})
+        self.assertEqual(cfg.section("deploy", required=False).as_dict(), {})
+        with self.assertRaises(ConfigError):
+            cfg.section("deploy")
+
     def test_env_expansion_and_missing_env(self) -> None:
         os.environ["RSI_TEST_VALUE"] = "secret"
         try:
@@ -96,6 +102,46 @@ a:
         child = cfg.child({"type": "x", "v": 2}, "child")
         self.assertEqual(child.get_int("v"), 2)
         self.assertEqual(child.repo_root, self.root)
+
+    def test_omitted_config_uses_builtin_defaults(self) -> None:
+        previous = os.getcwd()
+        with tempfile.TemporaryDirectory() as td:
+            os.chdir(td)
+            try:
+                cfg = load_config()
+            finally:
+                os.chdir(previous)
+        self.assertEqual(cfg.get("trainer.type"), "mock")
+        self.assertEqual(cfg.get("checkpoint.initial.model_path"), "mock://base-model")
+        self.assertEqual(cfg.get("run.seed"), 7)
+        self.assertTrue(cfg.get_list("stop.policies"))
+        self.assertTrue(cfg.specs("analyze.methods"))
+        self.assertTrue(Path(cfg.source).is_file())
+
+    def test_partial_config_is_merged_over_defaults(self) -> None:
+        path = self._write("partial.yaml", "trainer:\n  steps: 5\ndata:\n  max_generated: 8\n")
+        cfg = load_config(path)
+        self.assertEqual(cfg.get_int("trainer.steps"), 5)
+        self.assertEqual(cfg.get_int("data.max_generated"), 8)
+        self.assertEqual(cfg.get("trainer.type"), "mock")
+        self.assertTrue(cfg.get_list("stop.policies"))
+        self.assertEqual(cfg.plugin("loop")["type"], "classic")
+
+    def test_overrides_apply_after_the_config_file(self) -> None:
+        path = self._write("overrides.yaml", "trainer:\n  steps: 5\n")
+        cfg = load_config(
+            path,
+            [
+                "trainer.steps=9",
+                "stop.policies=[{type: max_rounds, max_rounds: 1}]",
+            ],
+        )
+        self.assertEqual(cfg.get_int("trainer.steps"), 9)
+        self.assertEqual(cfg.get_list("stop.policies"), [{"type": "max_rounds", "max_rounds": 1}])
+
+    def test_missing_config_file_still_fails(self) -> None:
+        with self.assertRaises(ConfigError):
+            load_config(self.root / "nope.yaml")
 
 
 if __name__ == "__main__":

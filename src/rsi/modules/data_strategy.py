@@ -405,6 +405,7 @@ class DataStrategyPlanner(Component):
         self.step = target_cfg.get_float("step", 0.05)
         self.min_share = target_cfg.get_float("min_share", 0.01)
         self.max_shift = target_cfg.get_float("max_shift", 0.35)
+        self.pending_priority = target_cfg.get_float("pending_priority", 0.25)
         optimize_cfg = cfg.section("optimize", required=False)
         self.max_datasets = optimize_cfg.get_int("max_datasets", 4)
         self.diversity_weight = optimize_cfg.get_float("diversity_weight", 0.1)
@@ -439,6 +440,8 @@ class DataStrategyPlanner(Component):
             raise ConfigError("data.strategy.target.min_share must be within [0, 1)")
         if not 0 < self.max_shift <= 1:
             raise ConfigError("data.strategy.target.max_shift must be within (0, 1]")
+        if not 0 <= self.pending_priority <= 1:
+            raise ConfigError("data.strategy.target.pending_priority must be within [0, 1]")
         if self.diversity_weight < 0:
             raise ConfigError("data.strategy.optimize.diversity_weight must be non-negative")
         if not 0 <= self.diversity_threshold <= 1:
@@ -513,9 +516,20 @@ class DataStrategyPlanner(Component):
         preset = dict(self.task.ability_priorities) if self.task else {}
         if not preset:
             preset = preset_from_datasets(candidates)
+        deficits = self._deficits(defects)
+        pending = sorted(
+            {str(name) for name in getattr(getattr(context, "state", None), "pending_capabilities", None) or []}
+            & set(deficits)
+        )
+        for capability in pending:
+            deficits[capability] = max(deficits[capability], self.pending_priority)
+        if pending:
+            notes.append(
+                f"pending capabilities keep at least {self.pending_priority}: {', '.join(pending)}"
+            )
         target = adjust_target_distribution(
             preset,
-            self._deficits(defects),
+            deficits,
             step=self.step,
             min_share=self.min_share,
             max_shift=self.max_shift,

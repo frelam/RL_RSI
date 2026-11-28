@@ -12,6 +12,8 @@ A task starts with preset ability shares $\pi^{(0)}_a$ (`TaskSpec.ability_priori
 
 The result is normalized to a distribution. Transfers are recorded for audit. One distribution is produced per round; passing different `step` values produces different target distributions for step 2.
 
+Capabilities carried over from the previous round (`pending_capabilities`) keep at least `pending_priority` in the deficit list when they are also defects this round. A target that failed validation therefore competes again instead of waiting behind unrelated defects.
+
 Candidate datasets follow the round chain: round 0 uses `TaskSpec.datasets`, later rounds use the datasets selected in the previous round, and a task without presets uses the whole registry.
 
 ## Coverage and target distributions

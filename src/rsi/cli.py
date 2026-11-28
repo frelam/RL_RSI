@@ -29,7 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run a loop")
-    run.add_argument("--config", default="configs/default.yaml")
+    run.add_argument(
+        "--config",
+        default=None,
+        help="config file; defaults to ./configs/default.yaml or the built-in defaults",
+    )
     run.add_argument("--model", default=None, help="initial checkpoint path")
     run.add_argument(
         "--task",
@@ -45,6 +49,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--quiet", action="store_true")
     run.add_argument("--debug", action="store_true")
     run.add_argument(
+        "--variable",
+        dest="variables",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="override a config value, repeatable; e.g. --variable trainer.steps=200",
+    )
+    run.add_argument(
         "overrides",
         nargs="*",
         metavar="KEY=VALUE",
@@ -52,9 +64,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     validate = sub.add_parser("validate", help="construct every configured plugin without running")
-    validate.add_argument("--config", default="configs/default.yaml")
+    validate.add_argument(
+        "--config",
+        default=None,
+        help="config file; defaults to ./configs/default.yaml or the built-in defaults",
+    )
     validate.add_argument("--dump-config", action="store_true")
     validate.add_argument("--quiet", action="store_true")
+    validate.add_argument(
+        "--variable",
+        dest="variables",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="override a config value, repeatable; e.g. --variable trainer.steps=200",
+    )
     validate.add_argument("overrides", nargs="*", metavar="KEY=VALUE")
 
     plugins = sub.add_parser("plugins", help="list registered plugins")
@@ -92,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
-    config = load_config(args.config, args.overrides)
+    config = load_config(args.config, _overrides(args))
     if args.model:
         _check_model_path(args.model)
         config.set("checkpoint.initial.model_path", args.model)
@@ -101,6 +125,8 @@ def _run(args: argparse.Namespace) -> int:
         _warn_unmeasured_abilities(config, abilities)
     if args.rounds is not None:
         _set_max_rounds(config, args.rounds)
+    if not args.quiet:
+        print(f"config: {config.source}")
     run_id = args.run_id or str(config.get("run.id", "")) or time.strftime("run-%Y%m%d-%H%M%S")
     runtime = Runtime(
         config,
@@ -133,6 +159,11 @@ def _run(args: argparse.Namespace) -> int:
         return 0 if result.status == "stopped" else 1
     finally:
         runtime.close()
+
+
+def _overrides(args: argparse.Namespace) -> list[str]:
+    """Positional KEY=VALUE overrides plus repeatable --variable KEY=VALUE."""
+    return [*args.overrides, *getattr(args, "variables", [])]
 
 
 def _check_model_path(value: str) -> None:
@@ -255,7 +286,7 @@ def _set_max_rounds(config: Config, rounds: int) -> None:
 
 
 def _validate(args: argparse.Namespace) -> int:
-    config = load_config(args.config, args.overrides)
+    config = load_config(args.config, _overrides(args))
     runtime = Runtime(
         config,
         run_id="validate",

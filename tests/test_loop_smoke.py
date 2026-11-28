@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -60,6 +62,28 @@ def _task_config(abilities: dict[str, float], *, gain: float, min_delta: float =
 
 
 class LoopSmokeTests(unittest.TestCase):
+    def test_run_without_config_uses_defaults_and_variables(self) -> None:
+        previous = os.getcwd()
+        with tempfile.TemporaryDirectory() as td:
+            os.chdir(td)
+            try:
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    code = main(
+                        ["run", "--run-id", "no-config", "--runs-dir", td, "--quiet",
+                         "--variable", "stop.policies=[{type: max_rounds, max_rounds: 1}]",
+                         "--variable", "run.seed=11"]
+                    )
+            finally:
+                os.chdir(previous)
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            run_dir = Path(td) / "no-config"
+            state = read_json(run_dir / "state.json")
+            self.assertEqual(state["round"], 1)
+            self.assertEqual(state["status"], "stopped")
+            self.assertIn("max_rounds", state["stop_reason"])
+            self.assertEqual(read_json(run_dir / "run.json")["seed"], 11)
+
     def test_demo_loop_reaches_target_and_writes_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             config = _write_config(
@@ -132,6 +156,124 @@ class LoopSmokeTests(unittest.TestCase):
             ]
             self.assertEqual(max(versions), state["round"])
 
+
+    def test_deploy_stage_serves_the_promoted_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            config = _write_config(
+                td,
+                "deploy.yaml",
+                "stop:\n  policies:\n    - {type: max_rounds, max_rounds: 1}\n"
+                "deploy:\n  enabled: true\n",
+            )
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "deploy",
+                     "--runs-dir", td, "--quiet"]
+                )
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            run_dir = Path(td) / "deploy"
+            state = read_json(run_dir / "state.json")
+            self.assertEqual(state["best_checkpoint"], "ckpt_v001")
+            deploy = read_json(run_dir / "rounds" / "round-0000" / "deploy" / "deploy.json")
+            self.assertTrue(deploy["deployed"])
+            self.assertTrue(deploy["promoted"])
+            self.assertEqual(deploy["checkpoint_id"], "ckpt_v001")
+            events = (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            event_types = {json.loads(line)["type"] for line in events if line.strip()}
+            self.assertIn("deploy_completed", event_types)
+
+    def test_fail_case_database_feeds_rollout_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            prompts = Path(td) / "prompts.jsonl"
+            prompts.write_text(
+                '{"prompt": "regular prompt", "capability": "math.reasoning"}\n',
+                encoding="utf-8",
+            )
+            fail_cases = Path(td) / "fail_cases.jsonl"
+            fail_cases.write_text(
+                '{"prompt": "real user failure", "capability": "instruction.following",'
+                ' "success": false}\n',
+                encoding="utf-8",
+            )
+            config = _write_config(
+                td,
+                "fail-cases.yaml",
+                "stop:\n  policies:\n    - {type: max_rounds, max_rounds: 1}\n"
+                "collect:\n  rollout:\n"
+                f"    prompts_path: {prompts.as_posix()}\n"
+                "    fail_cases:\n      enabled: true\n"
+                f"      path: {fail_cases.as_posix()}\n"
+                "      limit: 2\n",
+            )
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "fail-cases",
+                     "--runs-dir", td, "--quiet"]
+                )
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            rows = [
+                json.loads(line)
+                for line in (
+                    Path(td) / "fail-cases" / "rounds" / "round-0000" / "collect"
+                    / "trajectories.jsonl"
+                ).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            fail_rows = [row for row in rows if row["metadata"].get("fail_case")]
+            self.assertTrue(fail_rows)
+            self.assertEqual(fail_rows[0]["metadata"]["source"], "fail_case")
+            self.assertEqual(fail_rows[0]["metadata"]["capability"], "instruction.following")
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("pyarrow") or importlib.util.find_spec("datasets"),
+        "parquet writer is not installed",
+    )
+    def test_prompt_only_dataset_rows_reach_a_verl_parquet_artifact(self) -> None:
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as td:
+            catalog = Path(td) / "catalog.yaml"
+            catalog.write_text(
+                "datasets:\n  po_math:\n    loader: synthetic\n    license: synthetic\n"
+                "    abilities: {math.reasoning: 1.0}\n"
+                "    reward: {type: rule, name: numeric, weight: 1.0}\n"
+                "    preprocess: []\n"
+                "    rows:\n"
+                "      - {question: 'What is 6 times 7?', reference: '42'}\n"
+                "      - {question: 'What is 8 times 9?', reference: '72'}\n",
+                encoding="utf-8",
+            )
+            config = _write_config(
+                td,
+                "parquet.yaml",
+                "stop:\n  policies:\n    - {type: max_rounds, max_rounds: 1}\n"
+                "analyze:\n  methods: []\n"
+                "data:\n  strategy:\n    enabled: true\n    count: 2\n"
+                f"    catalog: {catalog.as_posix()}\n"
+                "    task:\n      id: prompt-only\n"
+                "      abilities: {math.reasoning: 1.0}\n"
+                "      datasets: [po_math]\n"
+                "  build:\n    type: verl_parquet\n    schema: verl_jsonl\n"
+                "    format: parquet\n    val_ratio: 0.0\n",
+            )
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "parquet",
+                     "--runs-dir", td, "--quiet"]
+                )
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            state = read_json(Path(td) / "parquet" / "state.json")
+            dataset_dir = Path(state["history"][0]["synthesize"]["dataset_path"])
+            train_path = dataset_dir / "train.parquet"
+            self.assertTrue(train_path.exists())
+            self.assertEqual(read_json(dataset_dir / "manifest.json")["format"], "parquet")
+            rows = pq.read_table(train_path).to_pylist()
+            self.assertTrue(rows)
+            self.assertTrue(all(row["extra_info"]["prompt_only"] for row in rows))
+            self.assertIn(rows[0]["reward_model"]["ground_truth"], {"42", "72"})
 
     def test_judged_defect_pulls_training_rows_from_the_dataset_library(self) -> None:
         with tempfile.TemporaryDirectory() as td:

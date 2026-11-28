@@ -4,6 +4,7 @@ import math
 import unittest
 
 from rsi.core.scoring import pass_at_k, score_text
+from rsi.rewards.verl_bridge import compute_score
 
 
 class ScoringTests(unittest.TestCase):
@@ -24,6 +25,25 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(score_text("x", None, "contains"), 0.0)
         with self.assertRaises(ValueError):
             score_text("x", "x", "unknown")
+
+    def test_verl_bridge_dispatches_on_the_row_verifier(self) -> None:
+        self.assertEqual(
+            compute_score(
+                "dataset:math_word_problems",
+                "The answer is 42.",
+                "42",
+                {"verifier": {"type": "rule", "name": "numeric"}},
+            )["score"],
+            1.0,
+        )
+        self.assertEqual(
+            compute_score("x", "42", "", {"verifier": {"name": "numeric"}})["score"],
+            0.0,
+        )
+        self.assertEqual(
+            compute_score("x", "yes", "yes", {"verifier": {"name": "not_registered"}})["score"],
+            1.0,
+        )
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+from rsi.core.errors import AdapterError
 from rsi.core.interfaces import DatasetBuilder
 from rsi.core.jsonio import atomic_write_json, now_iso, stable_hash, write_jsonl
 from rsi.adapters.verl_agentic_rl import tools_for_verl
@@ -19,20 +20,27 @@ from rsi.modules.data_quotas import target_shares
 
 @register("dataset_builder", "jsonl")
 class JsonlDatasetBuilder(DatasetBuilder):
-    """Write train/val JSONL, reward spec, manifest and statistics.
+    """Write train/val rows, reward spec, manifest and statistics.
 
     ``schema`` selects the row view:
       - ``prompt_response``: flat, framework-neutral
       - ``messages``: chat messages
-      - ``verl_jsonl``: a readable verl adapter view (parquet conversion is an
-        external, version-specific adapter boundary)
+      - ``verl_jsonl``: the verl dataset view
+
+    ``format`` selects the artifact format for ``train_path`` / ``val_path``:
+    ``jsonl`` (default) or ``parquet``. JSONL copies are always written as the
+    replay/audit source; the manifest records both.
     """
 
     default_schema = "prompt_response"
+    default_format = "jsonl"
 
     def __init__(self, runtime: Any, cfg: Any, **params: Any) -> None:
         super().__init__(runtime, cfg, **params)
         self.schema = str(self.cfg.get("schema", self.default_schema))
+        self.format = str(self.cfg.get("format", self.default_format)).lower()
+        if self.format not in {"jsonl", "parquet"}:
+            raise ValueError("data.build.format must be 'jsonl' or 'parquet'")
         self.val_ratio = self.cfg.get_float("val_ratio", 0.05)
         self.val_min = self.cfg.get_int("val_min", 1)
         self.val_max = self.cfg.get_int("val_max", 64)
@@ -65,9 +73,16 @@ class JsonlDatasetBuilder(DatasetBuilder):
         tolerance = Fraction(str(sampler_stats.get("ratio_tolerance", 0.0)))
         train_samples, val_samples = self._split_by_capability(ordered, seed, shares, tolerance)
         rows = [self._row(sample) for sample in ordered]
-        train_path = write_jsonl(dataset_dir / "train.jsonl", [self._row(s) for s in train_samples])
-        val_path = write_jsonl(dataset_dir / "val.jsonl", [self._row(s) for s in val_samples])
+        train_rows = [self._row(sample) for sample in train_samples]
+        val_rows = [self._row(sample) for sample in val_samples]
+        train_jsonl = write_jsonl(dataset_dir / "train.jsonl", train_rows)
+        val_jsonl = write_jsonl(dataset_dir / "val.jsonl", val_rows)
         all_path = write_jsonl(dataset_dir / "samples.jsonl", rows)
+        if self.format == "parquet":
+            train_path = self._write_parquet(dataset_dir / "train.parquet", train_rows)
+            val_path = self._write_parquet(dataset_dir / "val.parquet", val_rows)
+        else:
+            train_path, val_path = train_jsonl, val_jsonl
         reward_spec = self._reward_spec(samples, dataset_id, context, dataset_dir)
         reward_path = atomic_write_json(dataset_dir / "reward_spec.json", reward_spec)
         stats = self._stats(samples, mixing)
@@ -86,6 +101,7 @@ class JsonlDatasetBuilder(DatasetBuilder):
             "round": context.round,
             "seed": self.runtime.seed,
             "schema": self.schema,
+            "format": self.format,
             "created_at": now_iso(),
             "num_samples": len(samples),
             "num_train": len(train_samples),
@@ -100,9 +116,8 @@ class JsonlDatasetBuilder(DatasetBuilder):
             "stats": stats,
             "builder": self.cfg.as_dict(),
             "files": {
-                "train.jsonl": _sha256(train_path),
-                "val.jsonl": _sha256(val_path),
-                "reward_spec.json": _sha256(reward_path),
+                path.name: _sha256(path)
+                for path in {train_jsonl, val_jsonl, train_path, val_path, reward_path}
             },
             "all_samples": str(all_path.name),
         }
@@ -126,6 +141,28 @@ class JsonlDatasetBuilder(DatasetBuilder):
             mixing=dict(mixing),
             stats={**stats, "stats_path": str(stats_path), "dataset_id": dataset_id},
         )
+
+    def _write_parquet(self, path: Path, rows: list[dict[str, Any]]) -> Path:
+        """Write rows as parquet, preferring the Hugging Face ``datasets`` writer."""
+        try:
+            from datasets import Dataset
+
+            try:
+                Dataset.from_list(rows).to_parquet(str(path))
+                return path
+            except Exception as exc:  # noqa: BLE001 - fall back to pyarrow
+                self.logger.warning("datasets parquet write failed, trying pyarrow: %s", exc)
+        except ImportError:
+            pass
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError as exc:
+            raise AdapterError(
+                "Parquet dataset output requires the optional 'datasets' or 'pyarrow' package"
+            ) from exc
+        pq.write_table(pa.Table.from_pylist(rows), path)
+        return path
 
     def _val_count(self, total: int) -> int:
         if total <= 1:
@@ -211,6 +248,7 @@ class JsonlDatasetBuilder(DatasetBuilder):
                 "env_path": sample.env_path,
                 "round": sample.round,
                 "source": sample.source,
+                "prompt_only": bool(sample.metadata.get("prompt_only")),
                 **(verl.get("extra_info") or {}),
             }
             row: dict[str, Any] = {
@@ -396,6 +434,14 @@ class JsonlDatasetBuilder(DatasetBuilder):
 @register("dataset_builder", "verl_jsonl")
 class VerlJsonlDatasetBuilder(JsonlDatasetBuilder):
     default_schema = "verl_jsonl"
+
+
+@register("dataset_builder", "verl_parquet")
+class VerlParquetDatasetBuilder(JsonlDatasetBuilder):
+    """verl dataset view written as parquet (train/val) plus JSONL audit copies."""
+
+    default_schema = "verl_jsonl"
+    default_format = "parquet"
 
 
 def _sha256(path: Path) -> str:

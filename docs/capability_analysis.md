@@ -2,6 +2,10 @@
 
 This document covers the three places where the loop reasons about capabilities: the catalog and the analyzers that estimate what the model lacks, the scope that limits a run, and the validation that decides whether a candidate checkpoint is promoted. See [capability analysis and validation theory](capability_decision_theory.md) for the statistical reading of the rules and their error rates.
 
+## Rollout evidence
+
+`collect.rollout` sends prompts from `prompts_path` to the serving checkpoint and stores the trajectories for the trajectory analyzer and rollout reuse. With `collect.rollout.fail_cases.enabled`, it also reads a JSONL fail-case database of real user failures. Each row needs a `prompt` or `messages` and may carry `capability`, `subcapability`, `success` and `reward`. The collected trajectory keeps `fail_case: true` in its metadata, so a review can separate user-reported cases from synthetic prompts.
+
 ## Capability catalog and analyzers
 
 `configs/capabilities.yaml` is the shared vocabulary between benchmarks, analysis, and data planning. It defines ability names, priorities, reward and verifier settings, and benchmark mappings. Benchmark adapters may also declare a URL and description. Reports include the capabilities observed in their evaluated items.

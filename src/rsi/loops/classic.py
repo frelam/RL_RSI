@@ -11,6 +11,7 @@ from rsi.loops.stages import (
     AnalyzeStage,
     CollectStage,
     DataStage,
+    DeployStage,
     DistillStage,
     PromoteStage,
     SyncStage,
@@ -42,6 +43,7 @@ class ClassicLoop(Loop):
             validation,
             self.distill,
             PromoteStage(runtime, runtime.config.section("checkpoint")),
+            DeployStage(runtime, runtime.config.section("deploy", required=False)),
         ]
         self.on_stage_error = str(cfg.get("on_stage_error", "abort"))
         self.max_stage_retries = cfg.get_int("max_stage_retries", 1)

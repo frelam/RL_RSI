@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import csv
 import importlib
+import io
 import json
 import math
+import os
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +39,8 @@ class DatasetSpec:
     reward_code: str = ""
     split: str = "train"
     config: str | None = None
+    #: Git ref used by the ``github`` loader; defaults to ``main``.
+    ref: str = ""
     #: Load-time steps run by ``preprocess_row``.
     preprocess: list[str] = field(default_factory=list)
     #: Script(s) that turned the raw download into the rows at ``path``; documentation only.
@@ -95,6 +101,7 @@ class DatasetCatalog:
                     reward_code=str(value.get("reward_code") or ""),
                     split=str(value.get("split", "train")),
                     config=str(value["config"]) if value.get("config") is not None else None,
+                    ref=str(value.get("ref") or ""),
                     preprocess=[str(v) for v in steps],
                     pipeline=pipeline,
                     source=str(value.get("source") or ""),
@@ -459,9 +466,10 @@ def _import_dataset_loader(path: str) -> Callable[[DatasetSpec, Path], list[dict
 def fetch_dataset_rows(spec: DatasetSpec, root: str | Path) -> list[dict[str, Any]]:
     """Fetch rows through a registered or dotted-path loader.
 
-    Built-in loaders cover ``jsonl``, ``parquet``, ``web``, ``huggingface`` and
-    ``synthetic``. A registry entry may also name ``package.module:function``;
-    the callable receives ``(spec, root)`` and returns row mappings.
+    Built-in loaders cover ``jsonl``, ``parquet``, ``web``, ``huggingface``,
+    ``github`` and ``synthetic``. A registry entry may also name
+    ``package.module:function``; the callable receives ``(spec, root)`` and
+    returns row mappings.
     """
     loader = _DATASET_LOADERS.get(spec.loader)
     if loader is None:
@@ -514,6 +522,139 @@ def _load_huggingface_rows(spec: DatasetSpec, root: Path) -> list[dict[str, Any]
         raise AdapterError("Hugging Face datasets require the optional 'datasets' package") from exc
     dataset = load_dataset(spec.url, spec.config, split=spec.split)
     return [dict(row) for row in dataset]
+
+
+_GITHUB_RAW = "https://raw.githubusercontent.com/"
+_GITHUB_ROW_SUFFIXES = (".json", ".jsonl", ".ndjson", ".csv")
+_GITHUB_MAX_FILES = 32
+
+
+def _github_parts(spec: DatasetSpec) -> tuple[str, str, str, str, str | None]:
+    """Resolve a GitHub spec to (owner, repo, ref, path, raw file url)."""
+    url = spec.url.strip().rstrip("/")
+    if not url:
+        raise ConfigError(f"GitHub dataset {spec.name!r} requires url")
+    if url.startswith(_GITHUB_RAW):
+        parts = url[len(_GITHUB_RAW) :].split("/", 3)
+        if len(parts) < 4:
+            raise ConfigError(f"Invalid raw GitHub URL: {spec.url}")
+        owner, repo, ref, path = parts
+        return owner, repo, ref, path, url
+    if "github.com/" in url:
+        parts = url.split("github.com/", 1)[1].split("/", 3)
+        if len(parts) < 2 or not all(parts[:2]):
+            raise ConfigError(f"Invalid GitHub URL: {spec.url}")
+        owner, repo = parts[0], parts[1]
+        rest = "/".join(parts[2:])
+        if rest.startswith("blob/"):
+            ref, _, path = rest[len("blob/") :].partition("/")
+            raw = f"{_GITHUB_RAW}{owner}/{repo}/{ref}/{urllib.parse.quote(path)}"
+            return owner, repo, ref, path, raw
+        if rest.startswith("tree/"):
+            ref, _, path = rest[len("tree/") :].partition("/")
+            return owner, repo, ref, path, None
+        return owner, repo, spec.ref or "main", spec.path, None
+    parts = url.split("/")
+    if len(parts) == 2 and all(parts):
+        return parts[0], parts[1], spec.ref or "main", spec.path, None
+    raise ConfigError(
+        f"Unsupported GitHub URL {spec.url!r}; use owner/repo, a github.com blob/tree URL, "
+        "or a raw.githubusercontent.com URL"
+    )
+
+
+def _github_get(url: str) -> bytes:
+    headers = {"User-Agent": "RL-RSI", "Accept": "application/vnd.github+json"}
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("RSI_GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return response.read()
+
+
+def _rows_from_text(text: str, suffix: str, name: str) -> list[dict[str, Any]]:
+    suffix = suffix.lower()
+    if suffix == ".csv":
+        return [dict(row) for row in csv.DictReader(io.StringIO(text))]
+    if suffix in {".jsonl", ".ndjson"}:
+        rows = []
+        for line in text.splitlines():
+            if line.strip():
+                value = json.loads(line)
+                if isinstance(value, dict):
+                    rows.append(value)
+        return rows
+    value = json.loads(text)
+    if isinstance(value, list):
+        return [row for row in value if isinstance(row, dict)]
+    if isinstance(value, dict):
+        for key in ("data", "rows", "examples"):
+            if isinstance(value.get(key), list):
+                return [row for row in value[key] if isinstance(row, dict)]
+    raise AdapterError(f"GitHub file {name!r} does not contain a row list")
+
+
+def _github_rows_from_file(download_url: str, path: str) -> list[dict[str, Any]]:
+    suffix = Path(path).suffix
+    if suffix.lower() not in _GITHUB_ROW_SUFFIXES:
+        raise AdapterError(
+            f"Unsupported GitHub dataset file {path!r}; supported: {', '.join(_GITHUB_ROW_SUFFIXES)}"
+        )
+    return _rows_from_text(_github_get(download_url).decode("utf-8"), suffix, path)
+
+
+def _github_list_files(owner: str, repo: str, ref: str, path: str, depth: int = 0) -> list[dict[str, Any]]:
+    """List row files under a repo path through the contents API."""
+    api = (
+        f"https://api.github.com/repos/{owner}/{repo}/contents/"
+        f"{urllib.parse.quote(path)}?ref={urllib.parse.quote(ref)}"
+    )
+    value = json.loads(_github_get(api).decode("utf-8"))
+    if isinstance(value, dict):
+        if value.get("type") == "file":
+            return [value]
+        raise AdapterError(f"GitHub path {path!r} is not a file or directory listing")
+    if not isinstance(value, list):
+        raise AdapterError(f"Unexpected GitHub contents response for {path!r}")
+    files: list[dict[str, Any]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") == "file" and Path(str(entry.get("path", ""))).suffix.lower() in _GITHUB_ROW_SUFFIXES:
+            files.append(entry)
+        elif entry.get("type") == "dir" and depth < 3:
+            files.extend(
+                _github_list_files(owner, repo, ref, str(entry.get("path", "")), depth + 1)
+            )
+        if len(files) >= _GITHUB_MAX_FILES:
+            return files[:_GITHUB_MAX_FILES]
+    return files
+
+
+@register_dataset_loader("github")
+def _load_github_rows(spec: DatasetSpec, root: Path) -> list[dict[str, Any]]:
+    """Read JSON / JSONL / CSV rows from a GitHub repository.
+
+    ``url`` accepts ``owner/repo``, a ``github.com`` blob or tree URL, or a
+    ``raw.githubusercontent.com`` URL. With ``owner/repo`` (or a tree URL),
+    ``path`` is the file or directory inside the repo and ``ref`` the branch or
+    tag. Directory listings use the GitHub contents API and stop after
+    ``_GITHUB_MAX_FILES`` row files. Set ``GITHUB_TOKEN`` for higher rate limits.
+    """
+    owner, repo, ref, path, raw_url = _github_parts(spec)
+    if raw_url:
+        return _github_rows_from_file(raw_url, path)
+    if Path(path).suffix.lower() in _GITHUB_ROW_SUFFIXES:
+        raw = f"{_GITHUB_RAW}{owner}/{repo}/{ref}/{urllib.parse.quote(path)}"
+        return _github_rows_from_file(raw, path)
+    rows: list[dict[str, Any]] = []
+    for entry in _github_list_files(owner, repo, ref, path):
+        download_url = entry.get("download_url")
+        if not download_url:
+            continue
+        rows.extend(_github_rows_from_file(str(download_url), str(entry.get("path", ""))))
+    return rows
 
 
 def _adapt_verl_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -596,7 +737,8 @@ def rows_to_samples(
                 group=capability,
                 round=0,
                 metadata={"dataset": spec.name, "url": spec.url, "license": spec.license,
-                          "reward_hint": spec.reward, **dict(row.get("metadata") or {})},
+                          "prompt_only": not response, "reward_hint": spec.reward,
+                          **dict(row.get("metadata") or {})},
             )
         )
         if len(samples) >= limit:

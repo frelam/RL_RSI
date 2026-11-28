@@ -13,6 +13,7 @@ from rsi.core.jsonio import read_json
 from rsi.core.types import DataPlan, DataSample, Defect, DefectReport
 from rsi.modules.data_builder import JsonlDatasetBuilder
 from rsi.modules.data_strategy import (
+    DataStrategyPlanner,
     adjust_target_distribution,
     choose_fill_datasets,
     refine_strategy,
@@ -156,6 +157,58 @@ class ReviewTests(unittest.TestCase):
         )
 
         self.assertEqual([dataset.name for dataset in additions], ["focused"])
+
+
+class StrategyPlanningTests(unittest.TestCase):
+    def test_pending_capabilities_keep_a_deficit_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            runtime = FakeRuntime(td)
+            planner = DataStrategyPlanner(
+                runtime,
+                Config(
+                    {
+                        "enabled": True,
+                        "count": 20,
+                        "catalog": str(REPO_ROOT / "configs" / "datasets.yaml"),
+                        "target": {"pending_priority": 0.3},
+                        "task": {
+                            "id": "mixed",
+                            "abilities": {"math.reasoning": 0.6, "code.debugging": 0.4},
+                            "datasets": ["math_word_problems", "code_debugging"],
+                        },
+                    },
+                    config_dir=REPO_ROOT,
+                    repo_root=REPO_ROOT,
+                ),
+                default_count=20,
+            )
+            defects = DefectReport(
+                round=1,
+                checkpoint_id="c",
+                defects=[
+                    Defect(
+                        id="d1",
+                        capability="code.debugging",
+                        description="off-by-one",
+                        severity=0.2,
+                        confidence=1.0,
+                        source="test",
+                    )
+                ],
+            )
+            context = SimpleNamespace(
+                round=1,
+                history=[],
+                state=SimpleNamespace(pending_capabilities=["code.debugging"]),
+            )
+
+            strategy = planner.plan(defects, context)
+
+        self.assertEqual(strategy.target.deficits["code.debugging"], 0.3)
+        self.assertTrue(
+            any("pending capabilities" in note for note in strategy.target.notes),
+            strategy.target.notes,
+        )
 
 
 class StrategyLoopTests(unittest.TestCase):

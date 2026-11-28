@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,8 +9,10 @@ from types import SimpleNamespace
 
 from rsi.core.config import Config
 from rsi.core.jsonio import write_jsonl
+from rsi.core.types import DataPlan, DataSample
+from rsi.modules.data_builder import VerlParquetDatasetBuilder
 from rsi.modules.data_pipeline import DataPipeline
-from tests.helpers import REPO_ROOT
+from tests.helpers import REPO_ROOT, FakeRuntime
 
 
 class ReplayTests(unittest.TestCase):
@@ -98,6 +102,60 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(sample.response, "42")
         self.assertEqual(sample.verifier["name"], "numeric")
         self.assertEqual(sample.metadata["replayed_from_round"], 2)
+
+
+class ParquetBuilderTests(unittest.TestCase):
+    @unittest.skipUnless(
+        importlib.util.find_spec("pyarrow") or importlib.util.find_spec("datasets"),
+        "parquet writer is not installed",
+    )
+    def test_prompt_only_rows_are_written_to_parquet(self) -> None:
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as temp:
+            runtime = FakeRuntime(temp)
+            builder = VerlParquetDatasetBuilder(
+                runtime,
+                Config(
+                    {"val_ratio": 0, "include_metadata": True},
+                    config_dir=REPO_ROOT,
+                    repo_root=REPO_ROOT,
+                ),
+            )
+            sample = DataSample(
+                id="s1",
+                kind="text",
+                capability="math.reasoning",
+                prompt="What is 6 times 7?",
+                reference="42",
+                verifier={"type": "rule", "name": "numeric"},
+                source="dataset:math_word_problems",
+                group="math.reasoning",
+                metadata={"prompt_only": True},
+            )
+            context = SimpleNamespace(
+                round=0,
+                work_dir=Path(temp),
+                defects=None,
+                data_strategy=None,
+                sampler_stats={},
+                mixing_info={},
+                synthesis=None,
+            )
+
+            artifact = builder.build([sample], context, DataPlan(round=0), {"math.reasoning": 1.0})
+
+            train_path = Path(artifact.train_path)
+            self.assertEqual(train_path.suffix, ".parquet")
+            self.assertTrue(train_path.exists())
+            self.assertTrue((Path(artifact.path) / "train.jsonl").exists())
+            rows = pq.read_table(train_path).to_pylist()
+            self.assertEqual(rows[0]["data_source"], "dataset:math_word_problems")
+            self.assertTrue(rows[0]["extra_info"]["prompt_only"])
+            manifest = json.loads(
+                (Path(artifact.path) / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["format"], "parquet")
 
 
 if __name__ == "__main__":

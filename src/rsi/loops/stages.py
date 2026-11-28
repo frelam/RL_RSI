@@ -4,6 +4,7 @@ import math
 import time
 from typing import Any
 
+from rsi.adapters.templating import format_template
 from rsi.core.jsonio import atomic_write_json, stable_hash, to_plain, write_jsonl
 from rsi.core.types import (
     CapabilityScore,
@@ -262,6 +263,7 @@ class DataStage(Stage):
                 "synthesis": result.stats.get("synthesis", {}),
                 "replay": result.stats.get("replay", {}),
                 "merge": result.stats.get("merge", {}),
+                "data_pool": result.stats.get("data_pool", {}),
                 "mixing": result.mixing,
                 "mixing_candidate": result.mixing_info.get("candidate"),
                 "errors": result.errors,
@@ -280,6 +282,7 @@ class TrainStage(Stage):
         self.supervisor_cfg = cfg.section("supervisor", required=False)
         self.debug_cfg = cfg.section("debug_agent", required=False)
         self.feedback_cfg = cfg.section("feedback", required=False)
+        self.release_inference = cfg.get_bool("release_inference", False)
 
     def validate(self) -> None:
         self.runtime.trainer()
@@ -299,6 +302,7 @@ class TrainStage(Stage):
         checkpoint = ctx.memory["checkpoint"]
         supervisor = Supervisor(self.runtime, self.supervisor_cfg)
         trainer = self.runtime.trainer()
+        self._release_inference()
         adjustments: dict[str, Any] = {}
         max_retries = self.supervisor_cfg.get_int("max_retries", 1)
         max_replans = max(0, self.feedback_cfg.get_int("max_replans", 1))
@@ -327,6 +331,7 @@ class TrainStage(Stage):
                         "reason": "no training samples after strategy adjustment",
                     })
                     break
+                self._release_inference()
                 dataset = revised.dataset
                 ctx.memory["data"] = revised
                 ctx.memory["dataset"] = dataset
@@ -345,6 +350,10 @@ class TrainStage(Stage):
                 )
                 result = trainer.train(spec, observer=monitor.observe)
                 ctx.memory["gpu_hours"] += float(result.metadata.get("gpu_hours") or 0)
+                if not result.metrics:
+                    self.logger.warning(
+                        "trainer produced no metric records; metric monitoring is idle for this run"
+                    )
                 findings = monitor.snapshot()
                 verdict = supervisor.verdict(result, findings, attempt)
                 atomic_write_json(
@@ -394,9 +403,10 @@ class TrainStage(Stage):
             )
         if result is None or not result.checkpoint_path:
             return StageResult(
-                "failed", "trainer produced no checkpoint path",
+                "failed", result.error or "trainer produced no checkpoint path",
                 {"status": result.status if result else "unknown", "findings": len(findings)},
-                error="missing checkpoint", duration_s=time.time() - started,
+                error=result.error if result else "missing checkpoint",
+                duration_s=time.time() - started,
             )
         metrics: dict[str, Any] = {
             "train_status": result.status, "train_steps": result.num_steps,
@@ -420,11 +430,21 @@ class TrainStage(Stage):
             "ok", f"trained {result.num_steps} steps, candidate {candidate.id}",
             {"status": result.status, "candidate": candidate.id,
              "checkpoint_path": candidate.model_path, "steps": result.num_steps,
+             "metrics_records": len(result.metrics),
              "best_step": result.best_step, "findings": findings,
              "reason": verdict.reason if verdict else "", "strategy": strategy_history,
              "strategy_feedback": feedback},
             duration_s=time.time() - started,
         )
+
+    def _release_inference(self) -> None:
+        """Free serving GPUs before a local trainer starts, when configured."""
+        if not self.release_inference:
+            return
+        stop = getattr(self.runtime.inference(), "stop", None)
+        if callable(stop):
+            stop()
+            self.logger.info("released the inference endpoint before training")
 
     def _strategy_feedback(self, findings: list[dict[str, Any]], data: Any, collect: Any) -> dict[str, Any]:
         codes = {finding.get("code") for finding in findings}
@@ -726,6 +746,103 @@ class DistillStage(Stage):
     def close(self) -> None:
         if self.trainer is not None:
             self.trainer.close()
+
+
+class DeployStage(Stage):
+    """Serve the promoted checkpoint, or restore the incumbent after a rejection.
+
+    Deployment is opt-in. ``via_inference`` makes the configured inference
+    backend serve the current checkpoint; a managed vLLM launch therefore
+    reloads it. ``command`` runs an external deployment hook with
+    ``{model_path}``, ``{checkpoint_id}``, ``{base_url}``, ``{model}``,
+    ``{run_dir}`` and ``{round}`` placeholders.
+    """
+
+    name = "deploy"
+
+    def __init__(self, runtime: Any, cfg: Any) -> None:
+        super().__init__(runtime, cfg)
+        self.enabled = cfg.get_bool("enabled", False)
+        self.via_inference = cfg.get_bool("via_inference", True)
+        self.command = cfg.get("command", []) or []
+        self.timeout_s = cfg.get_float("timeout_s", 600.0)
+        self.env = cfg.get_dict("env", {})
+
+    def validate(self) -> None:
+        if self.enabled and not self.via_inference and not self.command:
+            raise ValueError("deploy.enabled requires deploy.via_inference or deploy.command")
+
+    def run(self, ctx: LoopContext) -> StageResult:
+        started = time.time()
+        if not self.enabled:
+            return StageResult("skipped", "deploy.enabled=false", duration_s=0.0)
+        checkpoint = self.runtime.checkpoints.current()
+        validation = ctx.memory.get("validation") or {}
+        payload: dict[str, Any] = {
+            "deployed": True,
+            "promoted": bool(validation.get("accepted")),
+            "checkpoint_id": checkpoint.id,
+            "model_path": checkpoint.model_path,
+            "round": ctx.round,
+            "endpoint": {},
+        }
+        if self.via_inference:
+            payload["endpoint"] = to_plain(self.runtime.inference().ensure(checkpoint))
+        if self.command:
+            variables = {
+                "model_path": checkpoint.model_path,
+                "checkpoint_id": checkpoint.id,
+                "base_url": payload["endpoint"].get("base_url", ""),
+                "model": payload["endpoint"].get("model", ""),
+                "run_dir": str(self.runtime.run_dir),
+                "round": ctx.round,
+            }
+            command = format_template(self.command, variables)
+            try:
+                outcome = self.runtime.executor.run(
+                    command,
+                    cwd=ctx.round_dir,
+                    env=format_template(self.env, variables),
+                    timeout=self.timeout_s if self.timeout_s > 0 else None,
+                    label="deploy",
+                )
+            except Exception as exc:  # noqa: BLE001 - stage boundary
+                payload.update(deployed=False, error=str(exc))
+                self.runtime.artifacts.write_json(ctx.round, self.name, "deploy.json", payload)
+                return StageResult(
+                    "failed", f"deploy command failed: {exc}", payload, error=str(exc),
+                    duration_s=time.time() - started,
+                )
+            payload.update(
+                command=outcome.command,
+                returncode=outcome.returncode,
+                deployed=outcome.returncode == 0,
+            )
+            if outcome.returncode != 0:
+                tail = (outcome.stderr or outcome.stdout).strip()[-2000:]
+                payload["error"] = tail
+                self.runtime.artifacts.write_json(ctx.round, self.name, "deploy.json", payload)
+                return StageResult(
+                    "failed",
+                    f"deploy command exited with {outcome.returncode}",
+                    payload,
+                    error=tail,
+                    duration_s=time.time() - started,
+                )
+        self.runtime.artifacts.write_json(ctx.round, self.name, "deploy.json", payload)
+        self.runtime.events.emit(
+            "deploy_completed",
+            round=ctx.round,
+            checkpoint_id=checkpoint.id,
+            promoted=payload["promoted"],
+        )
+        reason = "promoted candidate" if payload["promoted"] else "kept the incumbent"
+        return StageResult(
+            "ok",
+            f"deployed {checkpoint.id} ({reason})",
+            payload,
+            duration_s=time.time() - started,
+        )
 
 
 class PromoteStage(Stage):

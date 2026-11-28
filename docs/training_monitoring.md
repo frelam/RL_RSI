@@ -13,6 +13,10 @@ trainer:
 
 Monitor rules consume normalized records with `step` and `metrics`. A custom backend can implement its own parser before invoking the observer. A custom metric rule can be registered as a plugin and selected in `train.monitor.algorithms`.
 
+## Metrics source
+
+The command trainer and its `verl` / `slime` presets read JSONL records from `trainer.metrics_path`. A backend that does not write that file still trains and validates on benchmarks, but RSI cannot run metric monitors, supervisor retries on metric findings, or scaling-law projections. Add a backend callback that appends `{"step": .., "metrics": {..}}` rows, or map the names it emits with `trainer.metric_aliases`.
+
 ## Interpreting signals
 
 Metrics are evidence about a training process, not direct diagnoses. Reward rising while held-out validation stays flat can indicate reward exploitation, train/validation mismatch, or a lagging validation metric. Audit the verifier and inspect representative examples before changing data. Low entropy with flat validation can indicate premature policy concentration, but entropy is algorithm-dependent and should be read alongside KL, reward, and validation.
