@@ -1,0 +1,81 @@
+# Real-backend template: vLLM serving, verl training, real benchmarks and
+# OpenAI-compatible judges. The component tree validates without a GPU:
+#   rsi validate --config configs/real.yaml
+#   rsi run --config configs/real.yaml --model /path/to/checkpoint --task agentic/reasoning --dry-run
+# A real run also needs vLLM, verl and the configured judge endpoint.
+include: [default.yaml]
+
+checkpoint:
+  initial:
+    # Override with --model on the command line; the default keeps validate offline.
+    model_path: "mock://base-model"
+
+infer:
+  type: vllm
+  base_url: http://127.0.0.1:8000/v1
+  model: policy
+  follow_checkpoints: true
+  launch:
+    enabled: true
+    port: 8000
+    startup_timeout_s: 900
+    command: [python, -m, vllm.entrypoints.openai.api_server,
+              --model, "{model_path}", --served-model-name, "{model}",
+              --port, "{port}"]
+
+collect:
+  benchmark:
+    names: [math, code_debugging]
+    # Task presets target abilities that these two files do not cover. Add
+    # EvalScope entries below (requires the `evalscope` package) for the rest.
+
+benchmark:
+  benchmarks:
+    math:
+      type: jsonl
+      path: examples/benchmark_math.jsonl
+      pass_threshold: 0.5
+    code_debugging:
+      type: jsonl
+      path: examples/benchmark_code_debugging.jsonl
+      pass_threshold: 0.5
+    # Example EvalScope entry. The command must write results.json with a
+    # {"results": {<metric>: <score>}} mapping; capability_map maps metrics to
+    # catalog abilities.
+    # bfcl_v3:
+    #   type: evalscope
+    #   command: [evalscope, eval, --model, "{model}", --api-url, "{base_url}",
+    #             --datasets, bfcl_v3, --output-dir, "{output_dir}"]
+    #   capability_map: {bfcl_v3: agentic.single_turn_tool_call}
+    #   pass_threshold: 0.5
+
+trainer:
+  type: verl
+  # Starting point for verl PPO/GRPO; add the algorithm and rollout flags your
+  # recipe needs. Placeholders are filled from the dataset and checkpoint.
+  command: [torchrun, --nproc_per_node, "8", -m, verl.trainer.main_ppo,
+            --data.train_files, "{train_path}",
+            --data.val_files, "{val_path}",
+            --actor_rollout_ref.model.path, "{model_path}",
+            --trainer.default_local_dir, "{output_dir}"]
+  output_dir: "{work_dir}/checkpoint"
+  metrics_path: "{work_dir}/metrics.jsonl"
+  poll_interval_s: 10
+  timeout_s: 86400
+  gpu_count: 8
+
+llm:
+  default_profile: generator
+  profiles:
+    generator:
+      type: openai
+      base_url: "${ENV:RSI_LLM_BASE_URL:http://127.0.0.1:8001/v1}"
+      model: "${ENV:RSI_LLM_MODEL:generator-model}"
+      api_key_env: OPENAI_API_KEY
+      json_mode: true
+    judge:
+      type: openai
+      base_url: "${ENV:RSI_JUDGE_BASE_URL:http://127.0.0.1:8001/v1}"
+      model: "${ENV:RSI_JUDGE_MODEL:judge-model}"
+      api_key_env: OPENAI_API_KEY
+      json_mode: true

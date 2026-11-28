@@ -524,8 +524,26 @@ class DataPipeline:
         samples.sort(key=lambda sample: (str(sample.metadata.get("dataset", "")), sample.id))
         samples = samples[:count]
         synthesis: dict[str, Any] = {"enabled": self.strategy_synthesize}
-        if not strategy.review.accepted:
-            synthesized, synthesis = self._synthesize_deficits(strategy, context, errors)
+        deficits = (
+            {}
+            if strategy.review.accepted
+            else {
+                name: float(value)
+                for name, value in strategy.review.deficits.items()
+                if float(value) > 1e-9
+            }
+        )
+        # Coverage in the selector is estimated from registry metadata. A selected
+        # dataset can still yield no rows for an ability (wrong tags, empty source,
+        # quota 0), so fill any target ability that materialized nothing.
+        actual = _capability_counts(samples)
+        for capability, share in strategy.target.distribution.items():
+            if float(share) > 1e-9 and actual.get(capability, 0) == 0:
+                deficits[capability] = max(float(deficits.get(capability, 0.0)), float(share))
+        if deficits:
+            synthesized, synthesis = self._synthesize_deficits(
+                strategy, context, errors, deficits=deficits
+            )
             synthesis["used"] = True
             if synthesized:
                 samples = self._merge_synthesized(samples, synthesized, count, strategy)
@@ -548,6 +566,8 @@ class DataPipeline:
         strategy: DatasetStrategy,
         context: DataContext,
         errors: list[str],
+        *,
+        deficits: dict[str, float] | None = None,
     ) -> tuple[list[DataSample], dict[str, Any]]:
         """LLM fallback: synthesize rows for the target abilities still missing."""
         info: dict[str, Any] = {
@@ -558,11 +578,16 @@ class DataPipeline:
             "by_capability": {},
             "errors": [],
         }
-        deficits = {
-            name: float(value)
-            for name, value in strategy.review.deficits.items()
-            if float(value) > 1e-9
-        }
+        if deficits is None:
+            deficits = {
+                name: float(value)
+                for name, value in strategy.review.deficits.items()
+                if float(value) > 1e-9
+            }
+        else:
+            deficits = {
+                name: float(value) for name, value in deficits.items() if float(value) > 1e-9
+            }
         if not self.strategy_synthesize or not deficits:
             return [], info
         collector = self.collectors.get(self.strategy_synthesis_collector)

@@ -15,7 +15,7 @@ git clone https://github.com/frelam/RL_RSI.git && cd RL_RSI
 python -m pip install -e .
 ```
 
-Runs offline with the built-in mock stack; real backend settings are commented in [configs/default.yaml](configs/default.yaml).
+Runs offline with the built-in mock stack. [configs/real.yaml](configs/real.yaml) wires vLLM, verl, real benchmarks and OpenAI-compatible judges.
 
 ## Usage
 

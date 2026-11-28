@@ -7,6 +7,8 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+import yaml
+
 from rsi.cli import main
 from rsi.core.jsonio import read_json
 from tests.helpers import REPO_ROOT
@@ -17,6 +19,44 @@ def _write_config(td: str, name: str, extra: str) -> Path:
     path = Path(td) / name
     path.write_text(f"include: [{(REPO_ROOT / 'configs' / 'default.yaml').as_posix()}]\n{extra}", encoding="utf-8")
     return path
+
+
+def _task_abilities(*presets: str) -> dict[str, float]:
+    raw = yaml.safe_load(
+        (REPO_ROOT / "configs" / "tasks.yaml").read_text(encoding="utf-8")
+    )
+    abilities: dict[str, float] = {}
+    for preset in presets:
+        for ability, weight in (raw["tasks"][preset].get("abilities") or {}).items():
+            key = str(ability)
+            abilities[key] = max(abilities.get(key, 0.0), float(weight))
+    return abilities
+
+
+def _task_config(abilities: dict[str, float], *, gain: float, min_delta: float = 0.0) -> str:
+    """A mock benchmark that measures every ability in the task preset."""
+    extra = {
+        "analyze": {"methods": [{"type": "rule", "name": "rule"}]},
+        "stop": {"policies": [{"type": "max_rounds", "max_rounds": 2}]},
+        "collect": {"benchmark": {"names": ["task"]}},
+        "validate": {"min_delta": min_delta},
+        "benchmark": {
+            "benchmarks": {
+                "task": {
+                    "type": "mock",
+                    "items_per_capability": 1,
+                    "pass_threshold": 0.5,
+                    "max_gain_versions": 4,
+                    "noise": 0.0,
+                    "subcapabilities": ["core"],
+                    "capabilities": {
+                        name: {"base": 0.3, "gain": gain} for name in abilities
+                    },
+                }
+            }
+        },
+    }
+    return yaml.safe_dump(extra, sort_keys=False)
 
 
 class LoopSmokeTests(unittest.TestCase):
@@ -176,6 +216,95 @@ class LoopSmokeTests(unittest.TestCase):
                 )
             self.assertEqual(code, 1)
             self.assertIn("Unknown task preset", stderr.getvalue())
+
+    def test_missing_model_path_fails_before_running(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            config = _write_config(td, "missing.yaml", "")
+            missing = Path(td) / "no-such-checkpoint"
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "missing-model",
+                     "--runs-dir", td, "--model", str(missing), "--quiet"]
+                )
+            self.assertEqual(code, 1)
+            self.assertIn("Model checkpoint not found", stderr.getvalue())
+            self.assertFalse((Path(td) / "missing-model").exists())
+
+    def test_task_preset_warns_when_benchmarks_do_not_measure_its_abilities(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            config = _write_config(td, "cover.yaml", "")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "cover",
+                     "--runs-dir", td, "--model", "mock://base",
+                     "--task", "agentic/reasoning", "--dry-run", "--quiet"]
+                )
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            self.assertIn("task abilities are not measured", stderr.getvalue())
+            self.assertIn("agentic.single_turn_tool_call", stderr.getvalue())
+
+    def test_task_preset_targets_are_measured_and_promoted(self) -> None:
+        abilities = _task_abilities("agentic", "reasoning")
+        with tempfile.TemporaryDirectory() as td:
+            config = _write_config(td, "task.yaml", _task_config(abilities, gain=0.05))
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "task-verify",
+                     "--runs-dir", td, "--model", "mock://verification",
+                     "--task", "agentic/reasoning", "--round", "2", "--quiet"]
+                )
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            run_dir = Path(td) / "task-verify"
+            state = read_json(run_dir / "state.json")
+            self.assertEqual(state["status"], "stopped")
+            self.assertEqual(state["round"], 2)
+            self.assertEqual(state["best_checkpoint"], "ckpt_v002")
+            for record in state["history"]:
+                self.assertTrue(record["validation"]["accepted"], record["validation"])
+                self.assertEqual(set(record["collect"]["capabilities"]), set(abilities))
+                self.assertEqual(set(record["validation"]["targets"]), set(abilities))
+                initial = record["synthesize"]["strategy"]["target"]["initial"]
+                total = sum(abilities.values())
+                self.assertEqual(set(initial), set(abilities))
+                for name, weight in abilities.items():
+                    self.assertAlmostEqual(initial[name], weight / total)
+                self.assertGreater(record["synthesize"]["num_samples"], 0)
+                self.assertGreater(record["synthesize"]["synthesis"]["generated"], 0)
+                manifest = read_json(
+                    Path(record["synthesize"]["dataset_path"]) / "manifest.json"
+                )
+                self.assertEqual(set(manifest["stats"]["groups"]), set(abilities))
+            registry = read_json(run_dir / "checkpoints" / "registry.json")
+            self.assertEqual(registry["current"], "ckpt_v002")
+            self.assertEqual(registry["checkpoints"]["ckpt_v002"]["status"], "current")
+
+    def test_task_preset_rejects_a_candidate_that_does_not_improve_targets(self) -> None:
+        abilities = _task_abilities("reasoning")
+        with tempfile.TemporaryDirectory() as td:
+            config = _write_config(
+                td, "flat.yaml", _task_config(abilities, gain=0.0, min_delta=0.01)
+            )
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "task-reject",
+                     "--runs-dir", td, "--model", "mock://verification",
+                     "--task", "reasoning", "--round", "1", "--quiet"]
+                )
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            run_dir = Path(td) / "task-reject"
+            state = read_json(run_dir / "state.json")
+            self.assertEqual(state["round"], 1)
+            self.assertEqual(state["best_checkpoint"], None)
+            record = state["history"][0]
+            self.assertFalse(record["validation"]["accepted"])
+            self.assertFalse(record["promote"]["promoted"])
+            registry = read_json(run_dir / "checkpoints" / "registry.json")
+            self.assertEqual(registry["current"], "ckpt_v000")
+            self.assertEqual(registry["checkpoints"]["ckpt_v001"]["status"], "rejected")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from rsi import __version__
 from rsi.bootstrap import bootstrap
 from rsi.core.config import Config, dump_config, load_config
 from rsi.core.errors import ConfigError, RsiError
-from rsi.core.jsonio import read_json
+from rsi.core.jsonio import read_json, read_jsonl
 from rsi.core.registry import list_plugins
 from rsi.core.runtime import Runtime
 
@@ -94,9 +94,11 @@ def main(argv: list[str] | None = None) -> int:
 def _run(args: argparse.Namespace) -> int:
     config = load_config(args.config, args.overrides)
     if args.model:
+        _check_model_path(args.model)
         config.set("checkpoint.initial.model_path", args.model)
     if args.task:
-        _apply_task_preset(config, args.task)
+        abilities = _apply_task_preset(config, args.task)
+        _warn_unmeasured_abilities(config, abilities)
     if args.rounds is not None:
         _set_max_rounds(config, args.rounds)
     run_id = args.run_id or str(config.get("run.id", "")) or time.strftime("run-%Y%m%d-%H%M%S")
@@ -133,7 +135,23 @@ def _run(args: argparse.Namespace) -> int:
         runtime.close()
 
 
-def _apply_task_preset(config: Config, spec: str) -> None:
+def _check_model_path(value: str) -> None:
+    """Fail early on a local checkpoint path that does not exist.
+
+    URI-style values (``mock://``, ``hf://``) and bare hub ids are passed
+    through; only paths the call site clearly treats as local are checked.
+    """
+    if "://" in value:
+        return
+    path = Path(value).expanduser()
+    if (path.is_absolute() or value.startswith((".", "~"))) and not path.exists():
+        raise ConfigError(
+            f"Model checkpoint not found: {path}. Pass an existing local path, "
+            "a hub id such as Qwen/Qwen3-8B, or a URI such as mock://base-model."
+        )
+
+
+def _apply_task_preset(config: Config, spec: str) -> dict[str, float]:
     """Merge the named presets into the chapter-2 data strategy task."""
     names = [name.strip() for name in re.split(r"[/,]", spec) if name.strip()]
     if not names:
@@ -162,6 +180,64 @@ def _apply_task_preset(config: Config, spec: str) -> None:
     config.set(
         "data.strategy.task",
         {"id": spec, "abilities": abilities, "datasets": datasets},
+    )
+    return abilities
+
+
+def _benchmark_capabilities(config: Config, name: str) -> set[str]:
+    """Capabilities a configured benchmark can measure, best effort."""
+    section = config.section(f"benchmark.benchmarks.{name}", required=False)
+    kind = str(section.get("type", ""))
+    if kind == "mock":
+        return set(section.get_dict("capabilities", {}))
+    if kind in {"evalscope", "eval_scope"}:
+        return {str(value) for value in section.get_dict("capability_map", {}).values()}
+    if kind == "jsonl":
+        raw = str(section.get("path", "") or "")
+        if not raw:
+            return set()
+        path = Path(raw)
+        if not path.is_absolute():
+            path = config.repo_root / path
+        if not path.is_file():
+            return set()
+        try:
+            rows = read_jsonl(path)
+        except (OSError, ValueError):
+            return set()
+        return {
+            str(row["capability"])
+            for row in rows
+            if isinstance(row, dict) and row.get("capability")
+        }
+    return set()
+
+
+def _warn_unmeasured_abilities(config: Config, abilities: dict[str, float]) -> None:
+    """Tell the user when the configured benchmarks cannot check the task targets."""
+    names: list[str] = []
+    for path in ("collect.benchmark.names", "validate.benchmark.names"):
+        for value in config.get_list(path, []):
+            if str(value) not in names:
+                names.append(str(value))
+    if not names or not abilities:
+        return
+    covered: set[str] = set()
+    unresolved: list[str] = []
+    for name in names:
+        found = _benchmark_capabilities(config, name)
+        if found:
+            covered |= found
+        else:
+            unresolved.append(name)
+    missing = sorted(set(abilities) - covered)
+    if not missing:
+        return
+    detail = f"; coverage unknown for {', '.join(unresolved)}" if unresolved else ""
+    print(
+        f"warning: {len(missing)}/{len(abilities)} task abilities are not measured by "
+        f"benchmarks {names}{detail}: {', '.join(missing)}",
+        file=sys.stderr,
     )
 
 
