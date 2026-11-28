@@ -141,5 +141,42 @@ class LoopSmokeTests(unittest.TestCase):
             self.assertLessEqual(set(first.get("validation", {}).get("targets", [])), {"math.reasoning"})
 
 
+    def test_model_task_and_round_flags_drive_the_run(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            config = _write_config(
+                td,
+                "flags.yaml",
+                "stop:\n  policies:\n    - {type: max_rounds, max_rounds: 9}\n",
+            )
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "flags",
+                     "--runs-dir", td, "--model", "mock://flag-model",
+                     "--task", "agentic/reasoning", "--round", "2", "--quiet"]
+                )
+            self.assertEqual(code, 0, msg=stdout.getvalue() + stderr.getvalue())
+            run_dir = Path(td) / "flags"
+            state = read_json(run_dir / "state.json")
+            self.assertEqual(state["round"], 2)
+            self.assertIn("max_rounds", state["stop_reason"])
+            registry = read_json(run_dir / "checkpoints" / "registry.json")
+            self.assertEqual(registry["checkpoints"]["ckpt_v000"]["model_path"], "mock://flag-model")
+            plan = read_json(run_dir / "rounds" / "round-0000" / "synthesize" / "plan.json")
+            self.assertEqual(plan["metadata"]["dataset_strategy"]["task"], "agentic/reasoning")
+
+    def test_unknown_task_preset_fails_before_running(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            config = _write_config(td, "unknown.yaml", "")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    ["run", "--config", str(config), "--run-id", "unknown",
+                     "--runs-dir", td, "--task", "nope", "--quiet"]
+                )
+            self.assertEqual(code, 1)
+            self.assertIn("Unknown task preset", stderr.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -62,6 +62,20 @@ class Config:
                 node = node[part]
         return self._resolve(node)
 
+    def set(self, path: str, value: Any) -> None:
+        """Replace a value by dotted path, creating intermediate mappings."""
+        parts = self._split(path)
+        if not parts:
+            raise ConfigError("Cannot set the config root")
+        node = self._data
+        for part in parts[:-1]:
+            child = node.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                node[part] = child
+            node = child
+        node[parts[-1]] = value
+
     def require(self, *paths: str) -> "Config":
         for path in paths:
             self.get(path)

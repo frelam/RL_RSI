@@ -1,0 +1,51 @@
+# Task presets for `rsi run --task <preset>`. Several presets can be combined
+# with `/` or `,` (e.g. `--task agentic/reasoning`); overlapping abilities keep
+# the higher priority.
+#
+# Each preset seeds the chapter-2 data strategy:
+#   abilities  target priorities (normalized to shares), the abilities this task trains
+#   datasets   candidates from configs/datasets.yaml
+tasks:
+  reasoning:
+    abilities:
+      math.reasoning: 0.4
+      code.problem_solving: 0.2
+      logic.reasoning: 0.2
+      stem.reasoning: 0.2
+    datasets:
+      - math_word_problems
+      - math_dapo
+      - math_bigmath
+      - code_debugging
+      - code_deepcoder
+      - code_codecontests
+      - logic_synlogic
+      - stem_drsci
+      - if_nemotron
+
+  agentic:
+    abilities:
+      agentic.single_turn_tool_call: 0.15
+      agentic.multi_turn_stateful_tool_use: 0.15
+      agentic.interleaved_user_turns: 0.1
+      agentic.clarify_when_under_specified: 0.1
+      agentic.tool_irrelevance: 0.1
+      agentic.parallel_tool_calls: 0.1
+      agentic.multi_domain_state_ops: 0.1
+      agentic.search_qa: 0.1
+      agentic.math_code_reasoning: 0.05
+      agentic.code_from_tests: 0.05
+    datasets:
+      - apigen
+      - procedural_st
+      - procedural_mt
+      - interleaved_mt
+      - stateful_abstain
+      - parallel_mt
+      - vehicle_travel_mt
+      - social_ops_mt
+      - when2call
+      - hammer
+      - search_r1
+      - reasoning_math
+      - code_exec

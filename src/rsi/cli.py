@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import traceback
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from rsi import __version__
 from rsi.bootstrap import bootstrap
 from rsi.core.config import Config, dump_config, load_config
-from rsi.core.errors import RsiError
+from rsi.core.errors import ConfigError, RsiError
 from rsi.core.jsonio import read_json
 from rsi.core.registry import list_plugins
 from rsi.core.runtime import Runtime
@@ -27,6 +30,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="run a loop")
     run.add_argument("--config", default="configs/default.yaml")
+    run.add_argument("--model", default=None, help="initial checkpoint path")
+    run.add_argument(
+        "--task",
+        default=None,
+        help="task preset(s) from tasks.yaml, e.g. agentic/reasoning",
+    )
+    run.add_argument("--round", dest="rounds", type=int, default=None, help="maximum loop rounds")
     run.add_argument("--run-id", default=None)
     run.add_argument("--runs-dir", default=None)
     run.add_argument("--seed", type=int, default=None)
@@ -83,6 +93,12 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run(args: argparse.Namespace) -> int:
     config = load_config(args.config, args.overrides)
+    if args.model:
+        config.set("checkpoint.initial.model_path", args.model)
+    if args.task:
+        _apply_task_preset(config, args.task)
+    if args.rounds is not None:
+        _set_max_rounds(config, args.rounds)
     run_id = args.run_id or str(config.get("run.id", "")) or time.strftime("run-%Y%m%d-%H%M%S")
     runtime = Runtime(
         config,
@@ -115,6 +131,51 @@ def _run(args: argparse.Namespace) -> int:
         return 0 if result.status == "stopped" else 1
     finally:
         runtime.close()
+
+
+def _apply_task_preset(config: Config, spec: str) -> None:
+    """Merge the named presets into the chapter-2 data strategy task."""
+    names = [name.strip() for name in re.split(r"[/,]", spec) if name.strip()]
+    if not names:
+        raise ConfigError("--task must name at least one preset")
+    path = config.config_dir / "tasks.yaml"
+    if not path.exists():
+        path = config.repo_root / "configs" / "tasks.yaml"
+    if not path.exists():
+        raise ConfigError(f"Task preset file not found: {path}")
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    presets = raw.get("tasks") or {}
+    abilities: dict[str, float] = {}
+    datasets: list[str] = []
+    for name in names:
+        preset = presets.get(name)
+        if not isinstance(preset, dict):
+            available = ", ".join(sorted(presets)) or "none"
+            raise ConfigError(f"Unknown task preset {name!r}; available: {available}")
+        for ability, weight in (preset.get("abilities") or {}).items():
+            key = str(ability)
+            abilities[key] = max(abilities.get(key, 0.0), float(weight))
+        for dataset in preset.get("datasets") or []:
+            if str(dataset) not in datasets:
+                datasets.append(str(dataset))
+    config.set("data.strategy.enabled", True)
+    config.set(
+        "data.strategy.task",
+        {"id": spec, "abilities": abilities, "datasets": datasets},
+    )
+
+
+def _set_max_rounds(config: Config, rounds: int) -> None:
+    if rounds <= 0:
+        raise ConfigError("--round must be positive")
+    policies = [dict(policy) for policy in config.get_list("stop.policies", [])]
+    for policy in policies:
+        if str(policy.get("type")) == "max_rounds":
+            policy["max_rounds"] = rounds
+            break
+    else:
+        policies.append({"type": "max_rounds", "max_rounds": rounds})
+    config.set("stop.policies", policies)
 
 
 def _validate(args: argparse.Namespace) -> int:
