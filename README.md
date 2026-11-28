@@ -34,24 +34,24 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
 
 **A classical Loop** (May support other loop Orchestration):
 
-## 1. Collect trajectory/benchmark and analysis failures
+## 1. Collect trajectories/benchmarks and analyze missing capabilities
 
-- collect trajectory from deploy endpoint during a period of time.(Due to data security and privacy concerns, we are unable to collect users' environmental and data information.)
-- collect newest benchmark and merge into the former benchmark.
-- Collect failure traces and run benchmark to test model.(via evalscope, etc.)(pass@k\mean@k\response_length)
-- Defined a set of foundation capabilities.
-  - The catalog is `configs/capabilities.yaml`: ability names, priorities, and reward and verifier settings. See [capability catalog](docs/capability_analysis.md#capability-catalog-and-analyzers).
-- Define a task-capabilities map. User can custom its own task.
-  - The optional `trajectory_agent` analyzer estimates ability priorities from collected traces.
-- Define a task-benchmark map. To cover required capabilities.
-- Define a benchmark-capabilities map. To digest which capabilities not cover
-  - `configs/benchmarks.yaml` maps each benchmark and subset to the capabilities it covers.
-- Summarize which capabilities are missing.(use benchmark maps or LLM judge)
-  - Three analyzers: low scores against a baseline (`rule`), LLM-judged bad cases (`llm_judge`), and `missing_capability`, which compares scores with same-size open-model references. See [missing capability analyzer](docs/capability_analysis.md#missing-capability-analyzer) and [its reference rule](docs/capability_decision_theory.md#reference-rule-as-a-one-sided-test).
-- Prioritize the missing capabilities based on their foundational nature and importance.
-  - Severity scales with the catalog priority, and findings from all analyzers are merged. See [merging findings](docs/capability_decision_theory.md#merging-of-analyzer-findings) and [planning order](docs/capability_decision_theory.md#planning-order).
-- deliver the missing-capability map and priorities that chapter 2 folds into the task's target capability distribution.
-  - `data.plan.scope` limits the run to a target capability scope. See [capability scope](docs/capability_analysis.md#capability-scope).
+- Start from the serving checkpoint and the capabilities carried over from the last round.
+- Datasource:
+  1. The deployment endpoint: benchmark runs and policy rollouts.
+  2. Benchmarks: the existing suite, plus new ones added to the registry.
+  3. The capability catalog: abilities and their priorities. See [capability catalog](docs/capability_analysis.md#capability-catalog-and-analyzers).
+
+- **Capability gap analysis**
+  - **Collect evidence.** Run the configured benchmarks; collect rollouts only inside the deployment you control.
+    - A failed rollout is logged and skipped.
+    - Trajectories feed the trajectory analyzer and, in chapter 2, the rollout collector.
+  - **Map coverage.** Map benchmarks to the capabilities they cover.
+  - **Detect failures.** Algorithmic analyzers first:
+    - `rule`: low-scoring capabilities below the baseline.
+    - `missing_capability`: capabilities that no passing benchmark covers, judged against same-size open-model references. See [missing capability analyzer](docs/capability_analysis.md#missing-capability-analyzer).
+    - LLM analyzers only for what rules cannot judge: bad-case review, trajectory priorities, and an optional deep dive.
+  - **Merge and prioritize.** Merge findings, drop out-of-scope capabilities, and order by catalog priority. See [merging findings](docs/capability_decision_theory.md#merging-of-analyzer-findings) and [planning order](docs/capability_decision_theory.md#planning-order).
 
 ## 2. Determine a new data strategy to fix the model
 - Datasource:<br />

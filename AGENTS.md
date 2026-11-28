@@ -11,13 +11,14 @@
 
 ### Chapter format
 
-Each README chapter covers one loop stage and hands its output to the next chapter. Follow chapter 2 as the template:
+Each README chapter covers one loop stage. Follow chapter 2 as the template:
 
-- Start from the previous chapter's output (for example, the missing capabilities) and list the datasource options.
-- Name the main procedure in bold (for example, **Auto dataset generation**) and list its steps in execution order, each linking to its theory doc with an anchor.
-- Under each step, use nested bullets for branch conditions, fallbacks, and built-in processing.
-- Give the algorithmic path first. Add an LLM-agent path only where the deterministic algorithm cannot meet the requirement, such as synthesizing data for uncoverable capabilities or writing reward code.
-- Close with the handoff to the next chapter and the artifact that records it.
+- Start from the previous chapter's output and list the datasource options.
+- Name the main procedure in bold (for example, **Auto dataset generation**) and list its steps in execution order.
+- Write one short sentence per step. Keep to ideas and flow: leave out config keys, file paths, parameters, and implementation details, and link to the focused doc instead.
+- Under each step, use nested short bullets only for branch conditions and fallbacks.
+- Give the algorithmic path first, with one short line per algorithmic step. Add an LLM-agent path only where the deterministic algorithm cannot meet the requirement.
+- Do not close with a handoff paragraph or section.
 
 ### Procedure design
 
