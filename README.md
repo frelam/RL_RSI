@@ -54,30 +54,28 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
   - `data.plan.scope` limits the run to a target capability scope. See [capability scope](docs/capability_analysis.md#capability-scope).
 
 ## 2. Determine a new data strategy to fix the model
-
-Chapter 1 hands over the missing capabilities. The strategy turns them into one mixed dataset in five steps (`data.strategy`, off by default).
-
-1. **Adjust the target distribution.** Start from `TaskSpec.ability_priorities`; move a step of share from the largest ability to each deficient capability, falling back to the next largest when a donor reaches `min_share`. `max_shift` bounds the total move. Candidate datasets are the previous round's selection, or `TaskSpec.datasets` in round 0 (the whole registry if empty). See [target adjustment](docs/dataset_selection_theory.md#target-distribution-adjustment).
-2. **Optimize dataset selection and ratios.** Minimize the target-coverage gap plus `diversity_weight x (1 - diversity)` over dataset selection and sample ratios, protecting long-tail abilities first. Outputs: selected datasets, ratios, estimated distribution. See [selection theory](docs/dataset_selection_theory.md#two-stage-distribution-optimization).
-3. **Review and rework.** Compare the estimate with the target; the long-tail gap has a tighter tolerance. Above tolerance, add the registry datasets that cover the deficit with the least collateral coverage and return to step 2. Uncoverable abilities are reported. See [review and rework](docs/dataset_selection_theory.md#review-and-rework).
-4. **Materialize the dataset.** Download through the registry loaders, take each ratio's rows, then run the existing filters, difficulty grading, replay, mixing and builder to produce one dataset version.
-5. **Hand off.** The dataset artifact and ratios go to chapter 3 and are recorded in `state.json`, `pipeline.json` and the manifest.
-
 - Datasource:<br />
               1. Private datasets (adapters can be defined to specify data retrieval interfaces)<br />
               2. from web<br />
               3. from hf or github<br />
               4. Synthetic data<br />
   - Private datasets are registered in `configs/datasets.yaml`, one entry per dataset, and loaded by the `dataset_library` collector. See [the dataset registry and collector](docs/dataset_library.md).
-- Need some data process technology
-  - Deduplication (using hashing, etc.)
-  - Prevent benchmark data leakage
-- Combine recent train.jsonl data with newly sampled data to synthesize a dataset and reduce forgetting. Validation samples are excluded from replay.
-  - The replayed rows make up a fixed share of the new samples. With `data.replay.strategy: target`, that share is apportioned by the target distribution; `uniform` samples it at random. See [replay share](docs/dataset_selection_theory.md#replay-share).
-- Deliver a new dataset and the desired mix ratio.
-- Enhance the reward associated with the data
 
-The strategy is opt-in (`data.strategy.enabled`); without it, the defect-request planner and its `data.plan.target_distribution` pre-processing remain the default path.
+- Auto dataset generation
+  - **Adjust the target distribution.** Base on the missing capabilities, adjust target capabilities distribution. See [target adjustment](docs/dataset_selection_theory.md#target-distribution-adjustment).
+  - **Optimize dataset selection and ratios.** Use algorithum to determine what datasets to use and their mixing ratio to fit target distribution. See [selection theory](docs/dataset_selection_theory.md#two-stage-distribution-optimization).
+  - **Review and rework.** Compare the estimate with the target; the long-tail gap has a tighter tolerance. If not meet the requirement:
+    - use algorithum to add a new dataset in the candidate datasets group, and go to 'optimize dataset selection' for a second time. See [review and rework](docs/dataset_selection_theory.md#review-and-rework).
+    - if have llm agent, use them to synthetic data.
+  - **Materialize the dataset.** If every things go well, excute the dataset plan.  Download through the registry loaders, take each ratio's rows, then run the existing filters, difficulty grading, replay, mixing and builder to produce one dataset version.
+    - Have some build-in data process technology
+      - Deduplication (using hashing, etc.)
+      - Prevent benchmark data leakage
+      - Replay data. See [replay share](docs/dataset_selection_theory.md#replay-share).
+
+- Enhance the reward associated base on the new dataset and the problem from step 1.
+  - select build-in reward base on new dataset.
+  - If have llm agent, write code to imporve the reward. 
 
 ## 3. use RL framework to train by model it-self.(via verl, slime, etc.)
 - Filter the data with difficulty level from data pool.
