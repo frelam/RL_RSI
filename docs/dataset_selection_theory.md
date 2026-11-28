@@ -2,6 +2,18 @@
 
 The `dataset_library` collector picks registered datasets for a data request and splits the request count between them. This document gives the distribution-matching model and the rounding rules that follow. See [the dataset registry and collector](dataset_library.md) for the fields and loaders.
 
+## Target distribution adjustment
+
+A task starts with preset ability shares $\pi^{(0)}_a$ (`TaskSpec.ability_priorities`, normalized). Merged chapter-1 findings give deficits $d$ with severity $s_d$. The planner sorts the preset abilities by share and the deficits by severity, then moves mass to each deficit:
+
+- The donor order is the preset share order. A donor keeps at least `min_share`.
+- Each deficit receives at most `step`, taken from the largest donor, then the next largest, until the step is filled.
+- Deficits do not donate. `max_shift` caps the total moved mass, so a long defect list cannot erase the task profile.
+
+The result is normalized to a distribution. Transfers are recorded for audit. One distribution is produced per round; passing different `step` values produces different target distributions for step 2.
+
+Candidate datasets follow the round chain: round 0 uses `TaskSpec.datasets`, later rounds use the datasets selected in the previous round, and a task without presets uses the whole registry.
+
 ## Coverage and target distributions
 
 Let $A$ be the requested abilities, with nonnegative priorities $p_a$, and let dataset $i$ cover ability $a$ with $c_{ia} \in [0,1]$. The target share is $\pi_a = p_a / \sum_b p_b$. Coverage scores are not observed row frequencies, so the selector explicitly estimates each dataset's composition by normalizing its scores over all registered abilities:
@@ -36,6 +48,46 @@ where $q_i$ is dataset readiness. By default $\alpha_a=4$ and $\beta_a=1$; for l
 `max_datasets` adds a binary variable for each candidate, links its sample variable to that choice, and bounds the number of selected sources. Continuous proportions use LP; this cardinality constraint makes the problem a MILP. Both are solved by HiGHS through `scipy.optimize.milp`.
 
 A target is exactly feasible without a dataset limit only when its distribution lies in the convex hull of the available dataset composition vectors. Otherwise the optimizer returns the closest solution under the asymmetric loss and reports the remaining shortfall rather than silently changing the target.
+
+## Diversity and the strategy objective
+
+The chapter-2 strategy uses the same composition model with one addition. Let $O$ be the catalog abilities outside the target that at least one candidate covers with a declared score of at least `diversity_threshold`. For each $a\in O$, a binary $d_a$ is 1 when the mixture gives it at least `diversity_floor` of the batch:
+
+$$
+y_a \ge \text{diversity\_floor}\cdot N d_a .
+$$
+
+The second-stage objective becomes
+
+$$
+\text{distribution error} + \gamma\left(1 - \frac{1}{|O|}\sum_{a\in O}d_a\right),
+$$
+
+where the distribution error is the asymmetric under/over-coverage term from the previous section and $\gamma$ is `diversity_weight`. $\gamma=0$ removes the diversity term. The aggregate `__other__` excess is still penalized, so diversity trades against covering target abilities rather than overwhelming them.
+
+## Review and rework
+
+After the optimization, the review computes
+
+$$
+\text{gap}=\sum_a\max(0,\pi_a-\hat\pi_a),
+\qquad
+\text{longtail-gap}=\sum_{a:\pi_a\le\theta}\max(0,\pi_a-\hat\pi_a),
+$$
+
+where $\hat\pi_a$ is the mixture's estimated share and $\theta$ is `longtail_threshold`. The mix is accepted when both are within `gap_tolerance` and `longtail_gap_tolerance`. Long-tail abilities also receive the larger under-coverage weight in the optimizer.
+
+Otherwise the reviewer adds registry datasets that cover the missing abilities. For an unused dataset $i$ with composition $r_{ia}$,
+
+$$
+\text{fill}_i=\frac{\sum_{a\in D}r_{ia}\delta_a}{\sum_{a\in D}\delta_a},
+\qquad
+\text{impact}_i=\frac{\sum_{a\notin D}r_{ia}\pi_a}{\sum_{a\notin D}\pi_a},
+\qquad
+\text{score}_i=\text{fill}_i-w_{\text{impact}}\,\text{impact}_i,
+$$
+
+where $\delta_a$ is the remaining deficit and $D$ the deficient set. The best `add_per_round` datasets join the candidate set, and the optimizer runs again, up to `max_rework` times. If no unused dataset covers a remaining deficit, the review stops and reports the ability as uncovered.
 
 ## Integer quotas
 
@@ -77,6 +129,10 @@ rows, capped by `max_samples` and by the rows found in the last `recent_rounds` 
 | `priority` (per dataset) | `0.3` to `0.8` | Readiness $q_i$, used as a small mixture tie-breaking cost. |
 | `abilities` (per dataset) | `0.3` to `1.0` | Coverage scores $c_{ia}$, normalized into estimated composition. |
 | `max_datasets` | `4` | Maximum number of sources in the MILP. |
+| `data.strategy.target.step`, `min_share`, `max_shift` | `0.05`, `0.01`, `0.35` | Target adjustment: share per deficit, donor floor, total moved mass. |
+| `data.strategy.optimize.diversity_weight`, `diversity_threshold`, `diversity_floor` | `0.1`, `0.05`, `0.01` | Diversity trade-off $\gamma$, coverage needed to count an ability, minimum batch share per covered ability. |
+| `data.strategy.review.gap_tolerance`, `longtail_gap_tolerance` | `0.05`, `0.01` | Accepted target shortfall, ordinary and long-tail. |
+| `data.strategy.review.max_rework`, `add_per_round`, `impact_weight` | `2`, `2`, `1.0` | Add-and-reoptimize cycles, datasets added per cycle, collateral-coverage penalty. |
 | `data.plan.count_per_defect`, `min_count`, `max_count` | `4`, `2`, `6` | Request count before the `task.count` cap. |
 | `data.replay.fraction`, `max_samples`, `recent_rounds` | `0.2`, `128`, `1` | Replay target and its caps. |
 | `data.replay.strategy` | `target` | `uniform` shuffle or `target` capability allocation. |

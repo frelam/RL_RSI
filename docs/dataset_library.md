@@ -45,7 +45,9 @@ verl-style rows (verl `examples/reasoning_rl`, verl-toolRL `agentic_rl_data`) ar
 
 ## Source selection
 
-Before a dataset request is served, `DataPlanner` builds the round's target distribution from the merged analyzer priorities (with a defect severity fallback), a floor for `pending_capabilities`, and an optional blend with the previous round's distribution. The result is written to `plan.metadata["target_distribution"]` and to `pipeline.json`. `data.plan.target_distribution` controls the blend weight and the pending floor; setting `enabled: false` skips the pre-processing.
+When `data.strategy.enabled` is false, `DataPlanner` builds the round's target distribution from the merged analyzer priorities (with a defect severity fallback), a floor for `pending_capabilities`, and an optional blend with the previous round's distribution. The result is written to `plan.metadata["target_distribution"]` and to `pipeline.json`. `data.plan.target_distribution` controls the blend weight and the pending floor; setting `enabled: false` skips the pre-processing.
+
+When the chapter-2 strategy is enabled, the target distribution comes from the task preset plus the defect adjustment instead. The strategy selects datasets and ratios across the whole round, and the pipeline materializes that mix before the normal filter, mixing and builder stages. See [the data strategy](dataset_selection_theory.md#target-distribution-adjustment).
 
 The selector normalizes the requested ability priorities into a target distribution and each dataset's coverage scores into an estimated composition. When the plan has more than one dataset request, the collector runs one joint selection over the plan's `target_distribution`, then keeps the selected sources that cover each request's capability and renormalizes their ratios for that request. A single dataset request uses its own capability priority. Thousands of unrequested abilities are aggregated into one `__other__` dimension: their individual shares are free, but their aggregate excess is penalized. It then solves a two-stage LP/MILP for the per-source sample ratios:
 
@@ -66,10 +68,11 @@ In the loop, these samples then pass through the existing filter, difficulty, mi
 
 ## Task entry points
 
-`TaskSpec(id, ability_priorities, count=32, notes="")` describes a task by the capabilities it needs and their priorities (0 to 1).
+`TaskSpec(id, ability_priorities, count=32, notes="", datasets=[])` describes a task by the capabilities it needs and their priorities (0 to 1), plus the datasets that seed the first round of the data strategy.
 
 - `DataPipeline.plan_task(task, round_no=0)` returns a `DataPlan` with one `dataset` request per capability. The request count scales with the task priority and the catalog priority, between `data.plan.min_count` and `max_count`, and the total is capped at `task.count`. The strategy is `task_requirements`.
 - `DataPipeline.collect_task(task, round_no=0)` plans the task and loads its rows through the dataset library. It returns up to `task.count` samples and does not run the filter, difficulty, mixing, or builder stages. It requires a collector with kind `dataset`.
+- With `data.strategy.enabled: true`, the loop uses `task.datasets` as the first-round candidate set, adjusts `task.ability_priorities` with the chapter-1 defects, and materializes the strategy's selected datasets and ratios. Later rounds reuse the previous round's selected datasets as candidates.
 
 ## Configuration
 
@@ -78,3 +81,5 @@ In the loop, these samples then pass through the existing filter, difficulty, mi
 | `type` | `dataset_library` | Registers the collector for requests with kind `dataset`. |
 | `catalog` | `configs/datasets.yaml` | Registry file. |
 | `max_datasets` | `4` | Maximum number of sources selected per request. |
+| `data.strategy.enabled` | `false` | Use the task strategy instead of defect requests. |
+| `data.strategy.catalog` | `configs/datasets.yaml` | Registry the strategy selects from. |

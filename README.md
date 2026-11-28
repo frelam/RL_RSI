@@ -50,18 +50,19 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
   - Three analyzers: low scores against a baseline (`rule`), LLM-judged bad cases (`llm_judge`), and `missing_capability`, which compares scores with same-size open-model references. See [missing capability analyzer](docs/capability_analysis.md#missing-capability-analyzer) and [its reference rule](docs/capability_decision_theory.md#reference-rule-as-a-one-sided-test).
 - Prioritize the missing capabilities based on their foundational nature and importance.
   - Severity scales with the catalog priority, and findings from all analyzers are merged. See [merging findings](docs/capability_decision_theory.md#merging-of-analyzer-findings) and [planning order](docs/capability_decision_theory.md#planning-order).
-- deliver missing capabilities map and their priorities.
+- deliver the missing-capability map and priorities that chapter 2 folds into the task's target capability distribution.
   - `data.plan.scope` limits the run to a target capability scope. See [capability scope](docs/capability_analysis.md#capability-scope).
 
 ## 2. Determine a new data strategy to fix the model
-- Need some smart algorithm to produce data strategy. 
-  e.g.:<br />
-      1.Match the target ability distribution with LP/MILP dataset selection <br />
-      2.Assign greater data weight to more important and fundamental capabilities.<br />
-      3.Ensure that all affected domains have corresponding data coverage.<br />
-      4.Ensure that data strategies for other dimensions are not significantly affected.<br />
-  - Sources are weighted by a two-stage LP/MILP that protects long-tail abilities first, then minimizes distribution error while penalizing excess unspecified coverage. See [selection theory](docs/dataset_selection_theory.md).
-  - Before selection, the planner builds the round's target distribution from merged analyzer priorities, pending capabilities and the previous round (`data.plan.target_distribution`). See [target distribution pre-processing](docs/dataset_library.md#source-selection).
+
+Chapter 1 hands over the missing capabilities. The strategy turns them into one mixed dataset in five steps (`data.strategy`, off by default).
+
+1. **Adjust the target distribution.** Start from `TaskSpec.ability_priorities`; move a step of share from the largest ability to each deficient capability, falling back to the next largest when a donor reaches `min_share`. `max_shift` bounds the total move. Candidate datasets are the previous round's selection, or `TaskSpec.datasets` in round 0 (the whole registry if empty). See [target adjustment](docs/dataset_selection_theory.md#target-distribution-adjustment).
+2. **Optimize dataset selection and ratios.** Minimize the target-coverage gap plus `diversity_weight x (1 - diversity)` over dataset selection and sample ratios, protecting long-tail abilities first. Outputs: selected datasets, ratios, estimated distribution. See [selection theory](docs/dataset_selection_theory.md#two-stage-distribution-optimization).
+3. **Review and rework.** Compare the estimate with the target; the long-tail gap has a tighter tolerance. Above tolerance, add the registry datasets that cover the deficit with the least collateral coverage and return to step 2. Uncoverable abilities are reported. See [review and rework](docs/dataset_selection_theory.md#review-and-rework).
+4. **Materialize the dataset.** Download through the registry loaders, take each ratio's rows, then run the existing filters, difficulty grading, replay, mixing and builder to produce one dataset version.
+5. **Hand off.** The dataset artifact and ratios go to chapter 3 and are recorded in `state.json`, `pipeline.json` and the manifest.
+
 - Datasource:<br />
               1. Private datasets (adapters can be defined to specify data retrieval interfaces)<br />
               2. from web<br />
@@ -75,6 +76,8 @@ This feature will act like glue, combining Verl, VLLM, Harness, evalscope and ce
   - The replayed rows make up a fixed share of the new samples. With `data.replay.strategy: target`, that share is apportioned by the target distribution; `uniform` samples it at random. See [replay share](docs/dataset_selection_theory.md#replay-share).
 - Deliver a new dataset and the desired mix ratio.
 - Enhance the reward associated with the data
+
+The strategy is opt-in (`data.strategy.enabled`); without it, the defect-request planner and its `data.plan.target_distribution` pre-processing remain the default path.
 
 ## 3. use RL framework to train by model it-self.(via verl, slime, etc.)
 - Filter the data with difficulty level from data pool.

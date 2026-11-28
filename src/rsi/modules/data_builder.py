@@ -60,6 +60,8 @@ class JsonlDatasetBuilder(DatasetBuilder):
         reward_spec = self._reward_spec(samples, dataset_id)
         reward_path = atomic_write_json(dataset_dir / "reward_spec.json", reward_spec)
         stats = self._stats(samples, mixing)
+        if getattr(context, "data_strategy", None):
+            stats["data_strategy"] = context.data_strategy
         train_groups = Counter(map(group_key, train_samples))
         stats["train_group_ratio"] = {
             group: count / len(train_samples) for group, count in sorted(train_groups.items())

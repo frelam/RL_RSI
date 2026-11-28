@@ -119,6 +119,11 @@ class DatasetCatalog:
 _FILE_LOADERS = frozenset({"jsonl", "parquet"})
 
 
+def dataset_available(spec: DatasetSpec) -> bool:
+    """A file-backed dataset without local rows is declared only; it cannot be used."""
+    return bool(spec.path) or spec.loader not in _FILE_LOADERS
+
+
 def _unit(value: Any, name: str) -> float:
     try:
         number = float(value)
@@ -142,6 +147,9 @@ def select_datasets(
     longtail_under_weight: float = 8.0,
     dataset_cost_weight: float = 0.01,
     longtail_tolerance: float = 1e-6,
+    diversity_weight: float = 0.0,
+    diversity_threshold: float = 0.05,
+    diversity_floor: float = 0.01,
 ) -> DatasetSelection:
     """Fit dataset proportions to a target ability distribution with LP/MILP.
 
@@ -151,6 +159,8 @@ def select_datasets(
     The second minimizes asymmetric relative L1 error, with larger penalties for
     under-covering long-tail abilities and for displacing targets with ``__other__``.
     ``count`` is the required sample total; ``max_datasets`` adds binary variables.
+    With a positive ``diversity_weight``, catalog abilities outside the target
+    that reach ``diversity_floor`` of the batch also enter the objective.
     """
     if count < 0:
         raise ValueError("dataset sample count must be non-negative")
@@ -165,6 +175,12 @@ def select_datasets(
         raise ValueError("longtail_threshold must be within [0, 1]")
     if not math.isfinite(longtail_tolerance) or longtail_tolerance < 0:
         raise ValueError("longtail_tolerance must be finite and non-negative")
+    if not math.isfinite(diversity_weight) or diversity_weight < 0:
+        raise ValueError("diversity_weight must be finite and non-negative")
+    if not 0 <= diversity_threshold <= 1:
+        raise ValueError("diversity_threshold must be within [0, 1]")
+    if not 0 <= diversity_floor <= 1:
+        raise ValueError("diversity_floor must be within [0, 1]")
 
     requested = {
         key: value
@@ -174,18 +190,22 @@ def select_datasets(
         if value > 0
     }
     # A file-backed dataset without local rows is declared only; it cannot serve a request.
-    available = [item for item in datasets if item.path or item.loader not in _FILE_LOADERS]
+    available = [item for item in datasets if dataset_available(item)]
     candidates = [
         item for item in available if any(item.abilities.get(ability, 0.0) > 0 for ability in requested)
     ]
     if count == 0 or not requested or not candidates:
+        target_shares = _normalized_shares(requested)
         return DatasetSelection(
             datasets=[],
             ratios={},
             uncovered=sorted(requested),
             stats={
-                "target_distribution": _normalized_shares(requested),
+                "target_distribution": target_shares,
                 "actual_distribution": dict.fromkeys(requested, 0.0),
+                "gap": float(sum(target_shares.values())),
+                "longtail_gap": 0.0,
+                "diversity": {"score": 0.0, "covered": [], "available": []},
                 "composition_estimated_from_coverage": True,
             },
         )
@@ -194,11 +214,22 @@ def select_datasets(
     target = np.array([requested[name] for name in capabilities[:-1]] + [0.0], dtype=float)
     target /= target.sum()
     coverage = np.zeros((len(candidates), len(capabilities)))
+    dataset_totals: list[float] = []
     for dataset_index, item in enumerate(candidates):
-        total_coverage = sum(item.abilities.values())
+        total_coverage = sum(max(0.0, value) for value in item.abilities.values())
+        dataset_totals.append(total_coverage)
         for capability_index, name in enumerate(capabilities[:-1]):
-            coverage[dataset_index, capability_index] = item.abilities.get(name, 0.0) / total_coverage
+            coverage[dataset_index, capability_index] = max(0.0, item.abilities.get(name, 0.0)) / total_coverage
         coverage[dataset_index, -1] = max(0.0, 1.0 - coverage[dataset_index, :-1].sum())
+    other_abilities = [] if diversity_weight <= 0 else sorted(
+        {
+            ability
+            for item in candidates
+            for ability, value in item.abilities.items()
+            if ability not in requested and value >= max(diversity_threshold, 1e-12)
+        }
+    )
+    diversity_enabled = diversity_weight > 0 and bool(other_abilities)
     is_longtail = (target > 0) & (target <= longtail_threshold)
     scales = np.maximum(count * target, 1.0)
     scales[-1] = float(count)
@@ -208,7 +239,9 @@ def select_datasets(
     z_index = dataset_count + 2 * capability_count
     binary_start = z_index + 1
     use_binaries = max_datasets is not None and max_datasets < dataset_count
-    variable_count = binary_start + (dataset_count if use_binaries else 0)
+    diversity_start = binary_start + (dataset_count if use_binaries else 0)
+    diversity_count = len(other_abilities) if diversity_enabled else 0
+    variable_count = diversity_start + diversity_count
 
     rows: list[np.ndarray] = []
     lower: list[float] = []
@@ -250,17 +283,31 @@ def select_datasets(
             -np.inf,
             float(max_datasets),
         )
+    if diversity_enabled:
+        floor = max(1e-9, diversity_floor * count)
+        for diversity_index, ability in enumerate(other_abilities):
+            coefficients = {
+                dataset_index: max(0.0, item.abilities.get(ability, 0.0)) / dataset_totals[dataset_index]
+                for dataset_index, item in enumerate(candidates)
+                if dataset_totals[dataset_index] > 0
+            }
+            coefficients[diversity_start + diversity_index] = -floor
+            add_constraint(coefficients, 0.0, np.inf)
 
     constraints = LinearConstraint(np.vstack(rows), np.array(lower), np.array(upper))
     variable_lower = np.zeros(variable_count)
     variable_upper = np.full(variable_count, np.inf)
     variable_upper[:dataset_count] = count
     if use_binaries:
-        variable_upper[binary_start:] = 1.0
+        variable_upper[binary_start : binary_start + dataset_count] = 1.0
+    if diversity_enabled:
+        variable_upper[diversity_start:] = 1.0
     bounds = Bounds(variable_lower, variable_upper)
     integrality = np.zeros(variable_count, dtype=int)
     if use_binaries:
-        integrality[binary_start:] = 1
+        integrality[binary_start : binary_start + dataset_count] = 1
+    if diversity_enabled:
+        integrality[diversity_start:] = 1
 
     tail_limit = 0.0
     if is_longtail.any():
@@ -288,6 +335,8 @@ def select_datasets(
         objective[dataset_count + capability_count + capability_index] = (
             excess_weight / scales[capability_index]
         )
+    if diversity_enabled:
+        objective[diversity_start:] = -diversity_weight / diversity_count
     result = milp(objective, integrality=integrality, bounds=stage_two_bounds, constraints=constraints)
     if not result.success:
         raise RuntimeError(f"dataset mixture optimization failed: {result.message}")
@@ -302,6 +351,13 @@ def select_datasets(
     actual = {name: float(actual_vector[index]) for index, name in enumerate(capabilities)}
     shortfall = np.maximum(target - actual_vector, 0.0)
     excess = np.maximum(actual_vector - target, 0.0)
+    gap = float(sum(shortfall[index] for index in range(len(requested))))
+    longtail_gap = float(sum(shortfall[index] for index in np.flatnonzero(is_longtail)))
+    covered = [
+        ability
+        for index, ability in enumerate(other_abilities)
+        if diversity_enabled and result.x[diversity_start + index] > 0.5
+    ]
     selected = [item for index, item in enumerate(candidates) if ratio_vector[index] > 1e-8]
     return DatasetSelection(
         datasets=selected,
@@ -317,6 +373,14 @@ def select_datasets(
             "actual_distribution": actual,
             "shortfall": {name: float(shortfall[index]) for index, name in enumerate(capabilities)},
             "excess": {name: float(excess[index]) for index, name in enumerate(capabilities)},
+            "gap": gap,
+            "longtail_gap": longtail_gap,
+            "diversity": {
+                "score": len(covered) / len(other_abilities) if other_abilities else 0.0,
+                "weight": diversity_weight,
+                "covered": covered,
+                "available": other_abilities,
+            },
             "longtail_capabilities": [name for index, name in enumerate(capabilities) if is_longtail[index]],
             "longtail_max_relative_shortfall": float(
                 max((count * shortfall[index] / scales[index] for index in np.flatnonzero(is_longtail)), default=0.0)

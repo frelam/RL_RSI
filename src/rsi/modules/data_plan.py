@@ -8,6 +8,7 @@ from rsi.core.interfaces import Component
 from rsi.core.jsonio import stable_hash
 from rsi.core.schema import validate_json
 from rsi.core.types import DataPlan, DataRequest, Defect, DefectReport, TaskSpec
+from rsi.modules.data_strategy import DatasetStrategy, allocate_quotas
 from rsi.modules.datasets import merge_ability_priorities
 
 
@@ -77,6 +78,64 @@ class DataPlanner(Component):
         plan.metadata["curriculum_stage"] = curriculum.stage
         plan.metadata["curriculum_excluded"] = curriculum.excluded
         self._attach_target_distribution(plan, distribution, distribution_info)
+        return plan
+
+    def plan_strategy(self, strategy: DatasetStrategy, defects: DefectReport, context: Any) -> DataPlan:
+        """Declare the target abilities of a chapter-2 data strategy.
+
+        The requests carry the target distribution, one request per target
+        ability. Sampling itself is done from the strategy's selected datasets
+        and ratios; the requests remain the round's declared capability targets
+        for validation and training feedback.
+        """
+        target = dict(strategy.target.distribution)
+        quotas = allocate_quotas(target, strategy.count)
+        defect_by_capability = {defect.capability: defect for defect in defects.defects}
+        requests: list[DataRequest] = []
+        for capability in sorted(target):
+            count = quotas.get(capability, 0)
+            if count <= 0:
+                continue
+            defect = defect_by_capability.get(capability)
+            info = self.runtime.catalog.get(capability)
+            difficulty = list(self.default_difficulty)
+            verifier = info.get("verifier") or {}
+            seeds = list(info.get("seeds") or [])
+            if defect is not None:
+                difficulty = list(defect.suggested_data.get("target_difficulty") or difficulty)
+                verifier = defect.suggested_data.get("verifier") or verifier
+                seeds = list(defect.suggested_data.get("seeds") or seeds)
+            requests.append(
+                DataRequest(
+                    id=stable_hash("strategy-request", context.round, capability),
+                    capability=capability,
+                    kind="dataset",
+                    count=count,
+                    target_difficulty=difficulty,
+                    constraints={
+                        "min_severity": self.min_severity,
+                        "verifier": verifier,
+                        "source_round": context.round,
+                        "target_share": target[capability],
+                        "strategy": "dataset_strategy",
+                        "scheduled": False,
+                    },
+                    seeds=seeds,
+                    reward_hint=self.runtime.catalog.reward(capability),
+                    defect_id=defect.id if defect is not None else "",
+                    notes=(defect.description if defect is not None else f"Target capability {capability}")[:500],
+                )
+            )
+        plan = DataPlan(
+            round=context.round,
+            requests=requests,
+            total_target=sum(request.count for request in requests),
+            strategy="dataset_strategy",
+            notes=f"{len(requests)} target abilities from the data strategy",
+        )
+        plan.metadata["target_distribution"] = target
+        plan.metadata["target_distribution_info"] = strategy.target.as_dict()
+        plan.metadata["dataset_strategy"] = strategy.summary()
         return plan
 
     def plan_task(self, task: TaskSpec, context: Any) -> DataPlan:

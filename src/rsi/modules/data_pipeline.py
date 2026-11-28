@@ -7,7 +7,16 @@ from typing import Any
 
 from rsi.core.errors import ConfigError
 from rsi.core.jsonio import atomic_write_json, read_jsonl, stable_hash
-from rsi.core.types import ChatMessage, Checkpoint, DataPlan, DataSample, DatasetArtifact, DefectReport, TaskSpec
+from rsi.core.types import (
+    ChatMessage,
+    Checkpoint,
+    DataPlan,
+    DataRequest,
+    DataSample,
+    DatasetArtifact,
+    DefectReport,
+    TaskSpec,
+)
 from rsi.modules.data_builder import JsonlDatasetBuilder  # noqa: F401 - registers plugin
 from rsi.modules.data_collectors import (  # noqa: F401 - registers plugins
     AgenticSynthesisCollector,
@@ -24,6 +33,16 @@ from rsi.modules.data_difficulty import (  # noqa: F401 - registers plugins
 from rsi.modules.data_filters import FilterPipeline
 from rsi.modules.data_mixing import DiversitySampler, group_key
 from rsi.modules.data_plan import DataPlanner
+from rsi.modules.data_strategy import (
+    DataStrategyPlanner,
+    DatasetStrategy,
+    allocate_quotas,
+)
+from rsi.modules.datasets import (
+    fetch_dataset_rows,
+    fill_dataset_quotas,
+    rows_to_samples,
+)
 
 
 @dataclass
@@ -40,6 +59,8 @@ class DataContext:
     history: list[dict[str, Any]] = field(default_factory=list)
     target_distribution: dict[str, float] = field(default_factory=dict)
     dataset_selection: Any = None
+    strategy: DatasetStrategy | None = None
+    data_strategy: dict[str, Any] | None = None
     mixing_info: dict[str, Any] = field(default_factory=dict)
     mixing_groups: set[str] | None = None
     sampler_stats: dict[str, Any] = field(default_factory=dict)
@@ -67,6 +88,26 @@ def _capability_counts(samples: list[DataSample]) -> dict[str, int]:
     for sample in samples:
         counts[sample.capability] = counts.get(sample.capability, 0) + 1
     return counts
+
+
+def _dominant_ability(dataset: Any) -> str:
+    abilities = getattr(dataset, "abilities", {}) or {}
+    return max(abilities, key=lambda name: (abilities[name], name)) if abilities else "general"
+
+
+def _selection_summary(selection: Any) -> dict[str, Any]:
+    if selection is None:
+        return {}
+    return {
+        "selected": [dataset.name for dataset in selection.datasets],
+        "ratios": {name: float(value) for name, value in selection.ratios.items()},
+        "uncovered": list(selection.uncovered),
+        "target_distribution": dict(selection.stats.get("target_distribution", {})),
+        "actual_distribution": dict(selection.stats.get("actual_distribution", {})),
+        "gap": selection.stats.get("gap"),
+        "longtail_gap": selection.stats.get("longtail_gap"),
+        "diversity": selection.stats.get("diversity", {}),
+    }
 
 
 def _replay_quotas(shares: dict[str, float], total: int) -> dict[str, int]:
@@ -122,6 +163,11 @@ class DataPipeline:
             self.cfg.section("build", required=False),
         )
         self.max_generated = self.cfg.get_int("max_generated", 512)
+        self.strategy_planner = DataStrategyPlanner(
+            runtime,
+            self.cfg.section("strategy", required=False),
+            default_count=self.max_generated,
+        )
         self.save_intermediate = self.cfg.get_bool("save_intermediate", False)
         self.replay_cfg = self.cfg.section("replay", required=False)
         self.replay_fraction = self.replay_cfg.get_float("fraction", 0.0)
@@ -147,6 +193,7 @@ class DataPipeline:
         prompt_id = getattr(self.grader, "prompt_id", None)
         if prompt_id:
             self.runtime.prompt_hub.get(str(prompt_id))
+        self.strategy_planner.validate()
 
     def plan_task(self, task: TaskSpec, round_no: int = 0) -> DataPlan:
         """Expose task-to-dataset planning without starting a training run."""
@@ -203,7 +250,15 @@ class DataPipeline:
             history=list(getattr(state, "history", []) or []),
             mixing_info={},
         )
-        plan = self.planner.plan(defects, context)
+        strategy: DatasetStrategy | None = None
+        if self.strategy_planner.enabled:
+            strategy = self.strategy_planner.plan(defects, context)
+            context.strategy = strategy
+            context.dataset_selection = strategy.selection
+            context.data_strategy = strategy.summary()
+            plan = self.planner.plan_strategy(strategy, defects, context)
+        else:
+            plan = self.planner.plan(defects, context)
         context.plan = plan
         context.target_distribution = dict(plan.metadata.get("target_distribution") or {})
         plan.metadata.update(
@@ -247,32 +302,38 @@ class DataPipeline:
         new_samples: list[DataSample] = []
         errors: list[str] = []
         generated_per_request: dict[str, int] = {}
-        for request in plan.requests:
-            if len(new_samples) >= self.max_generated:
-                break
-            collector = self.collectors.get(request.kind)
-            if collector is None and self.default_collector:
-                collector = self.collectors.get(self.default_collector)
-            if collector is None:
-                errors.append(f"no collector for kind {request.kind!r}")
-                continue
-            try:
-                produced = collector.collect(request, context)
-            except Exception as exc:  # noqa: BLE001 - keep the loop alive
-                self.runtime.logger.warning(
-                    "data collector %s failed for %s: %s", request.kind, request.id, exc
-                )
-                errors.append(f"{request.kind}/{request.id}: {exc}")
-                continue
-            produced = produced[: request.count]
-            for sample in produced:
-                sample.metadata["target_difficulty"] = request.target_difficulty
-                reward_hint = dict(request.reward_hint)
-                reward_hint["weight"] = float(reward_hint.get("weight", 1.0)) * reward_multiplier
-                sample.metadata["reward_hint"] = reward_hint
-            generated_per_request[request.id] = len(produced)
-            new_samples.extend(produced)
-        new_samples = new_samples[: self.max_generated]
+        if strategy is not None:
+            new_samples, errors, generated_per_request = self._collect_strategy(
+                strategy, context, difficulty_shift, reward_multiplier
+            )
+        else:
+            for request in plan.requests:
+                if len(new_samples) >= self.max_generated:
+                    break
+                collector = self.collectors.get(request.kind)
+                if collector is None and self.default_collector:
+                    collector = self.collectors.get(self.default_collector)
+                if collector is None:
+                    errors.append(f"no collector for kind {request.kind!r}")
+                    continue
+                try:
+                    produced = collector.collect(request, context)
+                except Exception as exc:  # noqa: BLE001 - keep the loop alive
+                    self.runtime.logger.warning(
+                        "data collector %s failed for %s: %s", request.kind, request.id, exc
+                    )
+                    errors.append(f"{request.kind}/{request.id}: {exc}")
+                    continue
+                produced = produced[: request.count]
+                for sample in produced:
+                    sample.metadata["target_difficulty"] = request.target_difficulty
+                    reward_hint = dict(request.reward_hint)
+                    reward_hint["weight"] = float(reward_hint.get("weight", 1.0)) * reward_multiplier
+                    sample.metadata["reward_hint"] = reward_hint
+                generated_per_request[request.id] = len(produced)
+                new_samples.extend(produced)
+        if strategy is None:
+            new_samples = new_samples[: self.max_generated]
         replay_samples = self._load_replay(
             context.history,
             len(new_samples),
@@ -320,8 +381,11 @@ class DataPipeline:
                     "errors": errors,
                     "replay": replay_info,
                     "merge": merge_info,
+                    "data_strategy": context.data_strategy,
                 }
             )
+            if strategy is not None:
+                dataset.stats["dataset_ratios"] = dict(strategy.selection.ratios)
         result = DataPipelineResult(
             round=round_no,
             plan=plan,
@@ -346,6 +410,8 @@ class DataPipeline:
                 "target_distribution": context.target_distribution,
                 "replay": replay_info,
                 "merge": merge_info,
+                "strategy": context.data_strategy or {},
+                "dataset_selection": _selection_summary(strategy.selection) if strategy is not None else {},
             },
         )
         atomic_write_json(work_dir / "pipeline.json", result)
@@ -354,6 +420,61 @@ class DataPipeline:
 
             write_jsonl(work_dir / "filter_decisions.jsonl", decisions)
         return result
+
+    def _collect_strategy(
+        self,
+        strategy: DatasetStrategy,
+        context: DataContext,
+        difficulty_shift: float | dict[str, float],
+        reward_multiplier: float,
+    ) -> tuple[list[DataSample], list[str], dict[str, int]]:
+        """Step 4: load the selected datasets, take each ratio's rows, and mix."""
+        count = max(0, int(strategy.count))
+        quotas = allocate_quotas(strategy.selection.ratios, count)
+        errors: list[str] = []
+        generated: dict[str, int] = {}
+        sources: list[tuple[Any, list[DataSample]]] = []
+        for dataset in strategy.selection.datasets:
+            quota = quotas.get(dataset.name, 0)
+            if quota <= 0:
+                continue
+            try:
+                rows = fetch_dataset_rows(dataset, self.runtime.repo_root)
+            except Exception as exc:  # noqa: BLE001 - other sources can still serve the mix
+                self.runtime.logger.warning("strategy dataset %s failed: %s", dataset.name, exc)
+                errors.append(f"{dataset.name}: {exc}")
+                continue
+            capability = _dominant_ability(dataset)
+            request = DataRequest(
+                id=stable_hash("strategy", context.round, dataset.name),
+                capability=capability,
+                kind="dataset",
+                count=quota,
+                constraints={
+                    "strategy": "dataset_strategy",
+                    "source_round": context.round,
+                    "verifier": self.runtime.catalog.verifier(capability),
+                },
+            )
+            usable = rows_to_samples(dataset, rows, request, len(rows))
+            sources.append((dataset, usable))
+            generated[dataset.name] = len(usable)
+        samples, _source_counts = fill_dataset_quotas(sources, count, quotas)
+        samples.sort(key=lambda sample: (str(sample.metadata.get("dataset", "")), sample.id))
+        samples = samples[:count]
+        shifts = difficulty_shift if isinstance(difficulty_shift, dict) else {}
+        for sample in samples:
+            shift = (
+                float(shifts.get(sample.capability, 0.0))
+                if isinstance(difficulty_shift, dict)
+                else float(difficulty_shift)
+            )
+            low, high = self.planner.default_difficulty
+            sample.metadata["target_difficulty"] = [min(1.0, low + shift), min(1.0, high + shift)]
+            reward_hint = dict(sample.metadata.get("reward_hint") or {})
+            reward_hint["weight"] = float(reward_hint.get("weight", 1.0)) * reward_multiplier
+            sample.metadata["reward_hint"] = reward_hint
+        return samples, errors, generated
 
     def _load_replay(
         self,

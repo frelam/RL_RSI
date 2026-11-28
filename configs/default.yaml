@@ -154,6 +154,43 @@ data:
   enabled: true
   save_intermediate: false
   max_generated: 256
+  # Chapter-2 data strategy: task preset -> defect-adjusted target distribution
+  # -> dataset optimization -> review/rework -> materialized mix. Disabled by
+  # default; the defect-request planner below remains the default path.
+  strategy:
+    enabled: false
+    count: 0                    # 0 => data.max_generated
+    # catalog: configs/datasets.yaml
+    # Optional training task. `abilities` are the preset target priorities
+    # (normalized to shares); a task without them derives the preset from the
+    # datasets it names. `datasets` seed the first-round candidate set; later
+    # rounds reuse the previous mix.
+    # task:
+    #   id: reasoning
+    #   abilities: {math.reasoning: 0.6, code.debugging: 0.4}
+    #   datasets: [math_word_problems, code_debugging]
+    #   count: 128
+    target:
+      step: 0.05                # share moved to each deficient ability
+      min_share: 0.01           # a donor ability keeps at least this share
+      max_shift: 0.35           # total mass the deficits may move
+    optimize:
+      max_datasets: 4
+      diversity_weight: 0.1     # gamma in the gap + gamma * (1 - diversity) trade-off
+      diversity_threshold: 0.05 # dataset coverage needed to count an ability
+      diversity_floor: 0.01     # batch share a covered extra ability must reach
+      under_weight: 4.0
+      over_weight: 1.0
+      other_over_weight: 1.0
+      longtail_threshold: 0.1
+      longtail_under_weight: 8.0
+      readiness_weight: 0.01
+    review:
+      gap_tolerance: 0.05       # target mass still missing after optimization
+      longtail_gap_tolerance: 0.01
+      max_rework: 2             # add-datasets -> re-optimize cycles
+      add_per_round: 2
+      impact_weight: 1.0        # penalty for touching already-covered abilities
   # Reuse prior train.jsonl rows only. Validation rows are never replayed.
   replay:
     enabled: true

@@ -201,6 +201,8 @@ class TaskSpec:
     ability_priorities: dict[str, float]
     count: int = 32
     notes: str = ""
+    #: Datasets that seed the first-round candidate set of the data strategy.
+    datasets: list[str] = field(default_factory=list)
 
 
 @dataclass

@@ -256,6 +256,8 @@ class DataStage(Stage):
                 "replayed": result.replayed,
                 "capabilities": sorted({request.capability for request in result.plan.requests}),
                 "target_distribution": result.stats.get("target_distribution", {}),
+                "dataset_selection": result.stats.get("dataset_selection", {}),
+                "strategy": result.stats.get("strategy", {}),
                 "replay": result.stats.get("replay", {}),
                 "merge": result.stats.get("merge", {}),
                 "mixing": result.mixing,
