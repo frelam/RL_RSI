@@ -35,15 +35,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and [configs/datasets.yaml
 ## 1. Collect trajectories/benchmarks and analyze missing capabilities
 
 - Start from the serving checkpoint and the capabilities carried over from the last round.
-- evidence source:
-  - The deployment endpoint: benchmark runs and policy rollouts.
-  - Benchmarks: the existing suite, plus new ones added to the registry.
-  - The capability catalog: abilities and their priorities. See [capability catalog](docs/capability_analysis.md#capability-catalog-and-analyzers).
+- capability definition. See [capability catalog](docs/capability_analysis.md#capability-catalog-and-analyzers).
 
 - **Capability gap analysis**
-  - **Collect evidence.** Run the configured benchmarks; collect rollouts only inside the deployment you control.
-    - A failed rollout is logged and skipped.
-    - Trajectories feed the trajectory analyzer and, in chapter 2, the rollout collector.
+  - **Collect evidence.**
+    - Run the configured benchmarks.
+    - collect rollouts from real user scenarios(maybe config a fail-case database).
+    - collect trajectories and benchmark score. 
   - **Map coverage.** Map benchmarks to the capabilities they cover.
   - **Detect failures.** Algorithmic analyzers first:
     - `rule`: low-scoring capabilities below the baseline.
@@ -52,7 +50,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and [configs/datasets.yaml
   - **Merge and prioritize.** Merge findings, drop out-of-scope capabilities, and order by catalog priority. See [merging findings](docs/capability_decision_theory.md#merging-of-analyzer-findings) and [planning order](docs/capability_decision_theory.md#planning-order).
 
 ## 2. Determine a new data strategy to fix the model
-- Data source:
+- New Data source:
   - Private datasets. See [the dataset registry and collector](docs/dataset_library.md).
   - from web
   - from hf or github
@@ -113,7 +111,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and [configs/datasets.yaml
 ## 4. Check new checkpoint
 - run benchmark check if desired domain has been improved.
   - The candidate is promoted only when a target capability improves and no other measured capability regresses. Targets that did not improve are carried to the next round. See [validation](docs/capability_analysis.md#validation) and [validation as a joint test](docs/capability_decision_theory.md#validation-as-a-joint-test).
+
+- if not ok, return to step 2
+
 - if ok
   - if multi-domain rl training, run OPD to merge new domain abilities to base checkpoint.
   - else use new checkpoint as the new base checkpoint.
-- if not ok, return to step 2
+
+- if has deploy service, use the new base checkpoint to deploy the inference endpoint.
+
